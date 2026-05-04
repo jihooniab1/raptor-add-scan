@@ -1,18 +1,26 @@
 """Registry-metadata supply-chain detectors.
 
-Three detectors that all share the per-package metadata fetched from
-the upstream registry — bundled here so we make one HTTP call per dep
+Five detectors that all share the per-package metadata fetched from
+the upstream registry -- bundled here so we make one HTTP call per dep
 across the suite:
 
-  - ``recent_publish`` — first publish < 30 days ago.
-  - ``maintainer_change`` — any maintainer added in the last 14 days
-    (the xz pattern: a long-tail maintainer addition that ultimately
-    introduced a backdoor years later).
-  - ``maintainer_account_change`` — a maintainer's email changed within
-    14 days of a new release (the Axios npm pattern, March 2026).
+  - ``recent_publish`` -- package first published < 30 days ago.
+  - ``version_publish`` -- latest *version* published within N days
+    (configurable, default 7) on a package that had been dormant.
+  - ``maintainer_change`` -- maintainer list changed between the
+    two most recent versions (npm exposes per-version maintainers),
+    or a maintainer ``joined_at`` is within 14 days (future enriched
+    feeds).
+  - ``maintainer_account_change`` -- a maintainer's email changed
+    within 14 days of a new release (the Axios npm pattern, March 2026).
+  - ``low_bus_factor`` -- single maintainer on a package (PyPI author
+    or npm maintainers list of length 1).
 
-Each emits an ``RegistryMetaFinding`` row consumed by ``__init__.py``'s
-orchestrator.
+Each emits a ``RegistryMetaFinding`` row consumed by ``__init__.py``'s
+orchestrator.  A final severity-escalation pass adjusts severity based
+on co-occurrence: recent-publish alone is ``info``, combined with
+maintainer-change is ``medium``, combined with maintainer-change +
+dormant is ``high``.
 """
 
 from __future__ import annotations
@@ -29,7 +37,9 @@ logger = logging.getLogger(__name__)
 
 
 _RECENT_PUBLISH_DAYS = 30
+_VERSION_PUBLISH_DAYS = 7
 _MAINTAINER_CHANGE_DAYS = 14
+_DORMANT_DAYS = 365
 
 
 @dataclass
@@ -37,8 +47,10 @@ class RegistryMetaFinding:
     """One detector hit from the registry-metadata bundle."""
 
     kind: str                                # "recent_publish" |
+                                              # "version_publish" |
                                               # "maintainer_change" |
-                                              # "maintainer_account_change"
+                                              # "maintainer_account_change" |
+                                              # "low_bus_factor"
     dependency: Dependency
     detail: str
     evidence: Dict[str, Any]
@@ -52,11 +64,14 @@ def scan_deps(
     pypi_client=None,
     npm_client=None,
     now: Optional[datetime] = None,
+    recent_publish_days: int = _RECENT_PUBLISH_DAYS,
+    version_publish_days: int = _VERSION_PUBLISH_DAYS,
+    dormant_days: int = _DORMANT_DAYS,
 ) -> List[RegistryMetaFinding]:
-    """Run all three registry-metadata detectors over direct deps only.
+    """Run all registry-metadata detectors over direct deps only.
 
     ``pypi_client`` and ``npm_client`` are the canonical
-    ``packages/sca/registries/{pypi,npm}.py`` clients — passed in so
+    ``packages/sca/registries/{pypi,npm}.py`` clients -- passed in so
     callers can wire ``offline``, ``cache``, etc. consistently with the
     rest of the run.
     """
@@ -68,9 +83,18 @@ def scan_deps(
         meta = _fetch(dep, pypi_client=pypi_client, npm_client=npm_client)
         if meta is None:
             continue
-        out.extend(_recent_publish_check(dep, meta, now))
-        out.extend(_maintainer_change_check(dep, meta, now))
-        out.extend(_maintainer_account_change_check(dep, meta, now))
+        dep_findings: List[RegistryMetaFinding] = []
+        dep_findings.extend(_recent_publish_check(dep, meta, now,
+                                                   threshold=recent_publish_days))
+        dep_findings.extend(_version_publish_check(dep, meta, now,
+                                                    threshold=version_publish_days,
+                                                    dormant_threshold=dormant_days))
+        dep_findings.extend(_maintainer_change_check(dep, meta, now))
+        dep_findings.extend(_maintainer_account_change_check(dep, meta, now))
+        dep_findings.extend(_low_bus_factor_check(dep, meta))
+        # Severity escalation based on co-occurrence for this dep.
+        _escalate_severity(dep_findings, meta)
+        out.extend(dep_findings)
     return out
 
 
@@ -82,20 +106,36 @@ def scan_deps(
 class _Meta:
     """Normalised view of a package's registry metadata."""
 
-    first_publish: Optional[datetime]
-    latest_publish: Optional[datetime]
+    first_publish: Optional[datetime] = None
+    latest_publish: Optional[datetime] = None
+    second_latest_publish: Optional[datetime] = None
     maintainers: List[Dict[str, Any]] = field(default_factory=list)
     # ``[{name, email, joined_at?, last_email_change?}, ...]``
+    previous_maintainers: List[Dict[str, Any]] = field(default_factory=list)
+    # maintainer list from the second-most-recent version (npm only)
+    is_dormant: bool = False
+    # True when the gap between latest and second-latest publish exceeds
+    # _DORMANT_DAYS.
 
 
 def _fetch(
     dep: Dependency, *, pypi_client, npm_client,
 ) -> Optional[_Meta]:
     if dep.ecosystem == "PyPI" and pypi_client is not None:
-        raw = pypi_client.get_metadata(dep.name)
+        try:
+            raw = pypi_client.get_metadata(dep.name)
+        except Exception:  # noqa: BLE001
+            logger.debug("registry_metadata: PyPI fetch error for %r",
+                         dep.name, exc_info=True)
+            return None
         return _from_pypi(raw) if raw else None
     if dep.ecosystem == "npm" and npm_client is not None:
-        raw = npm_client.get_metadata(dep.name)
+        try:
+            raw = npm_client.get_metadata(dep.name)
+        except Exception:  # noqa: BLE001
+            logger.debug("registry_metadata: npm fetch error for %r",
+                         dep.name, exc_info=True)
+            return None
         return _from_npm(raw) if raw else None
     # Other ecosystems: no metadata source wired in this layer yet.
     return None
@@ -105,23 +145,29 @@ def _from_pypi(raw: dict) -> _Meta:
     """Normalise PyPI's JSON shape.
 
     PyPI publish timestamps live under ``releases[<ver>][i].upload_time_iso_8601``.
-    Maintainer info isn't published as structured data — only the
+    Maintainer info isn't published as structured data -- only the
     project-page listing of authors. We surface ``info.author`` /
     ``info.maintainer`` as a best-effort single entry.
     """
     info = raw.get("info") or {}
     releases = raw.get("releases") or {}
-    timestamps: List[datetime] = []
+    # Collect per-version first-publish timestamps.
+    version_timestamps: List[datetime] = []
     if isinstance(releases, dict):
         for files in releases.values():
             if not isinstance(files, list):
                 continue
+            earliest_for_ver: Optional[datetime] = None
             for f in files:
                 if not isinstance(f, dict):
                     continue
                 ts = _parse_iso(f.get("upload_time_iso_8601"))
                 if ts:
-                    timestamps.append(ts)
+                    if earliest_for_ver is None or ts < earliest_for_ver:
+                        earliest_for_ver = ts
+            if earliest_for_ver is not None:
+                version_timestamps.append(earliest_for_ver)
+    version_timestamps.sort()
     maintainers: List[Dict[str, Any]] = []
     for field_name in ("maintainer", "author"):
         n = info.get(field_name)
@@ -131,10 +177,19 @@ def _from_pypi(raw: dict) -> _Meta:
                 "name": n.strip(),
                 "email": (info.get(email_field) or "").strip() or None,
             })
+    first_pub = version_timestamps[0] if version_timestamps else None
+    latest_pub = version_timestamps[-1] if version_timestamps else None
+    second_latest = (version_timestamps[-2]
+                     if len(version_timestamps) >= 2 else None)
+    is_dormant = False
+    if latest_pub and second_latest:
+        is_dormant = (latest_pub - second_latest).days >= _DORMANT_DAYS
     return _Meta(
-        first_publish=min(timestamps) if timestamps else None,
-        latest_publish=max(timestamps) if timestamps else None,
+        first_publish=first_pub,
+        latest_publish=latest_pub,
+        second_latest_publish=second_latest,
         maintainers=maintainers,
+        is_dormant=is_dormant,
     )
 
 
@@ -142,19 +197,33 @@ def _from_npm(raw: dict) -> _Meta:
     """Normalise npm registry shape.
 
     npm publishes per-version timestamps under ``time.<ver>``. The full
-    maintainer list is in ``maintainers``.
+    maintainer list is in ``maintainers``.  Per-version metadata is in
+    ``versions.<ver>._npmUser`` and ``versions.<ver>.maintainers``.
     """
     times = raw.get("time") or {}
-    timestamps: List[datetime] = []
+    # Collect per-version timestamps (excluding created/modified meta-keys).
+    version_entries: List[tuple] = []  # (datetime, version_key)
     if isinstance(times, dict):
         for k, v in times.items():
-            # ``created`` and ``modified`` are also in ``time``; skip.
             if k in ("created", "modified"):
                 continue
             if isinstance(v, str):
                 ts = _parse_iso(v)
                 if ts:
-                    timestamps.append(ts)
+                    version_entries.append((ts, k))
+    version_entries.sort(key=lambda x: x[0])
+    first_pub = version_entries[0][0] if version_entries else None
+    latest_pub = version_entries[-1][0] if version_entries else None
+    latest_ver = version_entries[-1][1] if version_entries else None
+    second_latest_pub = (version_entries[-2][0]
+                         if len(version_entries) >= 2 else None)
+    second_latest_ver = (version_entries[-2][1]
+                         if len(version_entries) >= 2 else None)
+    is_dormant = False
+    if latest_pub and second_latest_pub:
+        is_dormant = (latest_pub - second_latest_pub).days >= _DORMANT_DAYS
+
+    # Top-level maintainers (current).
     raw_maint = raw.get("maintainers") or []
     maintainers: List[Dict[str, Any]] = []
     if isinstance(raw_maint, list):
@@ -164,28 +233,49 @@ def _from_npm(raw: dict) -> _Meta:
                     "name": m.get("name", ""),
                     "email": m.get("email", ""),
                 })
+
+    # Per-version maintainer comparison: extract maintainer list from
+    # the second-most-recent version to detect maintainer additions.
+    previous_maintainers: List[Dict[str, Any]] = []
+    versions_obj = raw.get("versions") or {}
+    if isinstance(versions_obj, dict) and second_latest_ver:
+        prev_ver_data = versions_obj.get(second_latest_ver)
+        if isinstance(prev_ver_data, dict):
+            prev_maint_raw = prev_ver_data.get("maintainers") or []
+            if isinstance(prev_maint_raw, list):
+                for m in prev_maint_raw:
+                    if isinstance(m, dict):
+                        previous_maintainers.append({
+                            "name": m.get("name", ""),
+                            "email": m.get("email", ""),
+                        })
+
     return _Meta(
-        first_publish=min(timestamps) if timestamps else None,
-        latest_publish=max(timestamps) if timestamps else None,
+        first_publish=first_pub,
+        latest_publish=latest_pub,
+        second_latest_publish=second_latest_pub,
         maintainers=maintainers,
+        previous_maintainers=previous_maintainers,
+        is_dormant=is_dormant,
     )
 
 
 # ---------------------------------------------------------------------------
-# Detector: recent_publish
+# Detector: recent_publish (package first published recently)
 # ---------------------------------------------------------------------------
 
 def _recent_publish_check(
     dep: Dependency, meta: _Meta, now: datetime,
+    *, threshold: int = _RECENT_PUBLISH_DAYS,
 ) -> List[RegistryMetaFinding]:
     if meta.first_publish is None:
         return []
     age_days = (now - meta.first_publish).days
-    if age_days >= _RECENT_PUBLISH_DAYS:
+    if age_days >= threshold:
         return []
     detail = (
         f"package {dep.ecosystem}:{dep.name} was first published "
-        f"{age_days} days ago — under the {_RECENT_PUBLISH_DAYS}-day "
+        f"{age_days} days ago -- under the {threshold}-day "
         f"threshold for recent-publish review"
     )
     return [RegistryMetaFinding(
@@ -194,7 +284,60 @@ def _recent_publish_check(
         detail=detail,
         evidence={"first_publish": meta.first_publish.isoformat(),
                   "age_days": age_days},
-        severity="medium" if age_days < 7 else "low",
+        severity="info",
+        confidence=Confidence("high",
+                               reason="registry publish timestamp"),
+    )]
+
+
+# ---------------------------------------------------------------------------
+# Detector: version_publish (latest version published recently,
+#   especially on a dormant package)
+# ---------------------------------------------------------------------------
+
+def _version_publish_check(
+    dep: Dependency, meta: _Meta, now: datetime,
+    *, threshold: int = _VERSION_PUBLISH_DAYS,
+    dormant_threshold: int = _DORMANT_DAYS,
+) -> List[RegistryMetaFinding]:
+    """Flag when the latest version was published within ``threshold`` days.
+
+    Fresh publishes on dormant packages are particularly suspicious --
+    the severity is elevated when the package had no releases for over
+    ``dormant_threshold`` days before this one.
+    """
+    if meta.latest_publish is None:
+        return []
+    age_days = (now - meta.latest_publish).days
+    if age_days >= threshold:
+        return []
+    dormant = meta.is_dormant
+    sev = "medium" if dormant else "info"
+    dormant_detail = ""
+    if dormant and meta.second_latest_publish is not None:
+        gap = (meta.latest_publish - meta.second_latest_publish).days
+        dormant_detail = (
+            f" (package was dormant for {gap} days before this release)"
+        )
+    detail = (
+        f"latest version of {dep.ecosystem}:{dep.name} was published "
+        f"{age_days} days ago{dormant_detail}"
+    )
+    evidence: Dict[str, Any] = {
+        "latest_publish": meta.latest_publish.isoformat(),
+        "version_age_days": age_days,
+        "dormant": dormant,
+    }
+    if meta.second_latest_publish is not None:
+        evidence["second_latest_publish"] = (
+            meta.second_latest_publish.isoformat()
+        )
+    return [RegistryMetaFinding(
+        kind="version_publish",
+        dependency=dep,
+        detail=detail,
+        evidence=evidence,
+        severity=sev,
         confidence=Confidence("high",
                                reason="registry publish timestamp"),
     )]
@@ -207,41 +350,75 @@ def _recent_publish_check(
 def _maintainer_change_check(
     dep: Dependency, meta: _Meta, now: datetime,
 ) -> List[RegistryMetaFinding]:
-    """Heuristic: when registry metadata exposes per-maintainer
-    ``joined_at`` (npm doesn't, but a future enriched feed could), flag
-    additions within ``_MAINTAINER_CHANGE_DAYS``.
+    """Detect maintainer-list changes between versions.
 
-    Today no major registry exposes per-maintainer add-dates in the
-    static metadata, so this detector is a placeholder that fires only
-    when the data is present. The `evidence_quotes` shape is ready for
-    when it is.
+    Two strategies:
+    1. **Per-version comparison** (npm): compare the maintainer list on
+       the latest version against the previous version's list.  New names
+       appearing are flagged.
+    2. **joined_at enrichment** (future feeds): when per-maintainer
+       ``joined_at`` is present, flag additions within
+       ``_MAINTAINER_CHANGE_DAYS``.
     """
-    recent: List[Dict[str, Any]] = []
+    findings: List[RegistryMetaFinding] = []
+
+    # Strategy 1: per-version comparison.
+    if meta.previous_maintainers:
+        prev_names = {m.get("name", "").lower()
+                      for m in meta.previous_maintainers if m.get("name")}
+        new_maintainers = [
+            m for m in meta.maintainers
+            if m.get("name") and m["name"].lower() not in prev_names
+        ]
+        if new_maintainers:
+            findings.append(RegistryMetaFinding(
+                kind="maintainer_change",
+                dependency=dep,
+                detail=(
+                    f"{len(new_maintainers)} new maintainer(s) added to "
+                    f"{dep.ecosystem}:{dep.name} between the two most "
+                    f"recent versions: "
+                    f"{', '.join(m['name'] for m in new_maintainers)}"
+                ),
+                evidence={"new_maintainers": [
+                    {k: v for k, v in m.items() if k != "email"}
+                    for m in new_maintainers
+                ]},
+                severity="low",
+                confidence=Confidence(
+                    "medium",
+                    reason="maintainer list changed between versions",
+                ),
+            ))
+
+    # Strategy 2: joined_at enrichment (fires only when data present).
     cutoff = now - timedelta(days=_MAINTAINER_CHANGE_DAYS)
+    recent: List[Dict[str, Any]] = []
     for m in meta.maintainers:
         joined = m.get("joined_at")
         if isinstance(joined, str):
             ts = _parse_iso(joined)
             if ts and ts >= cutoff:
                 recent.append(m)
-    if not recent:
-        return []
-    return [RegistryMetaFinding(
-        kind="maintainer_change",
-        dependency=dep,
-        detail=(f"{len(recent)} maintainer(s) added to "
-                f"{dep.ecosystem}:{dep.name} in the last "
-                f"{_MAINTAINER_CHANGE_DAYS} days"),
-        evidence={"recent_maintainers": [
-            {k: v for k, v in m.items() if k != "email"}
-            for m in recent
-        ]},
-        severity="low",                          # long-tail signal; S/N is poor
-        confidence=Confidence(
-            "medium",
-            reason="registry maintainer-add timestamp",
-        ),
-    )]
+    if recent:
+        findings.append(RegistryMetaFinding(
+            kind="maintainer_change",
+            dependency=dep,
+            detail=(f"{len(recent)} maintainer(s) added to "
+                    f"{dep.ecosystem}:{dep.name} in the last "
+                    f"{_MAINTAINER_CHANGE_DAYS} days"),
+            evidence={"recent_maintainers": [
+                {k: v for k, v in m.items() if k != "email"}
+                for m in recent
+            ]},
+            severity="low",
+            confidence=Confidence(
+                "medium",
+                reason="registry maintainer-add timestamp",
+            ),
+        ))
+
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +434,7 @@ def _maintainer_account_change_check(
     Triggered when ``last_email_change`` (custom enrichment field; not
     in vanilla npm/PyPI metadata) AND ``latest_publish`` are both within
     the window. Like `maintainer_change`, this fires only when the data
-    is present — currently a structural placeholder ready for richer
+    is present -- currently a structural placeholder ready for richer
     feeds to plug in.
     """
     if meta.latest_publish is None:
@@ -285,12 +462,88 @@ def _maintainer_account_change_check(
             "latest_publish": meta.latest_publish.isoformat(),
             "suspect_maintainers": suspect,
         },
-        severity="high",                         # narrow + actionable
+        severity="high",
         confidence=Confidence(
             "high",
             reason="email-change-within-release-window pattern",
         ),
     )]
+
+
+# ---------------------------------------------------------------------------
+# Detector: low_bus_factor
+# ---------------------------------------------------------------------------
+
+def _low_bus_factor_check(
+    dep: Dependency, meta: _Meta,
+) -> List[RegistryMetaFinding]:
+    """Flag packages with a single maintainer.
+
+    Single-maintainer packages are inherently more vulnerable to account
+    takeover -- one compromised credential gives full publish access.
+    This is an informational signal, not a vulnerability.
+    """
+    # Only fire when we have a concrete maintainer list.
+    if not meta.maintainers:
+        return []
+    # Count distinct maintainer names.
+    names = {m.get("name", "").lower().strip()
+             for m in meta.maintainers if m.get("name")}
+    if len(names) != 1:
+        return []
+    sole = meta.maintainers[0].get("name", "unknown")
+    return [RegistryMetaFinding(
+        kind="low_bus_factor",
+        dependency=dep,
+        detail=(
+            f"{dep.ecosystem}:{dep.name} has a single maintainer "
+            f"({sole}) -- account compromise would grant full "
+            f"publish access"
+        ),
+        evidence={
+            "maintainer_count": 1,
+            "sole_maintainer": sole,
+        },
+        severity="info",
+        confidence=Confidence("high",
+                               reason="registry maintainer list"),
+    )]
+
+
+# ---------------------------------------------------------------------------
+# Severity escalation -- co-occurrence adjustments
+# ---------------------------------------------------------------------------
+
+def _escalate_severity(
+    findings: List[RegistryMetaFinding],
+    meta: _Meta,
+) -> None:
+    """Adjust severities based on which signals co-occur for one dep.
+
+    Rules (from the task specification):
+      - recent_publish / version_publish alone -> ``info``
+      - recent/version_publish + maintainer_change -> ``medium``
+      - recent/version_publish + maintainer_change + dormant -> ``high``
+
+    ``maintainer_account_change`` keeps its own ``high`` (narrow signal).
+    ``low_bus_factor`` stays ``info`` unless escalated by co-occurrence.
+    """
+    kinds = {f.kind for f in findings}
+    has_publish = "recent_publish" in kinds or "version_publish" in kinds
+    has_maint_change = "maintainer_change" in kinds
+    dormant = meta.is_dormant
+
+    if has_publish and has_maint_change and dormant:
+        target_sev = "high"
+    elif has_publish and has_maint_change:
+        target_sev = "medium"
+    else:
+        return  # no escalation needed
+
+    for f in findings:
+        if f.kind in ("recent_publish", "version_publish",
+                       "maintainer_change", "low_bus_factor"):
+            f.severity = target_sev
 
 
 # ---------------------------------------------------------------------------

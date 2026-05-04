@@ -21,7 +21,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from core.json import JsonCache
 from . import SCA_CACHE_ROOT
@@ -322,6 +322,7 @@ def run_sca(
         reachability_map = scan_reachability(
             target, canonical,
             http=http, cache=cache, cve_dep_keys=cve_dep_keys,
+            osv_results=osv_results,
         )
         # Augment with /understand context-map when present — promotes
         # ``imported`` to ``likely_called`` for deps imported at sink
@@ -431,7 +432,12 @@ def run_sca(
 
     # 9. Best-effort coverage record: files examined = manifests +
     #    reachability evidence (sources that genuinely informed verdicts).
-    _maybe_write_coverage(output_dir, target, manifests, vuln_findings)
+    _maybe_write_coverage(
+        output_dir, target, manifests,
+        vuln_findings=vuln_findings,
+        supply_chain_findings=supply_chain_findings,
+        options=options,
+    )
 
     return RunResult(
         target=target,
@@ -555,7 +561,8 @@ def _run_maintainer_review(client, supply_chain_findings, canonical, http, optio
     flagged_keys = set()
     for f in supply_chain_findings:
         if f.kind in ("maintainer_change", "maintainer_account_change",
-                       "recent_publish"):
+                       "recent_publish", "version_publish",
+                       "low_bus_factor"):
             flagged_keys.add(f.dependency.key())
 
     if not flagged_keys and not options.review_maintainers:
@@ -886,7 +893,10 @@ def _maybe_write_coverage(
     output_dir: Path,
     target: Path,
     manifests: List[Manifest],
+    *,
     vuln_findings: List[VulnFinding],
+    supply_chain_findings: Sequence = (),
+    options: Optional[RunOptions] = None,
 ) -> None:
     """Emit ``coverage-sca.json`` listing every file that materially
     influenced the run. Best-effort: missing core.coverage module is fine.
@@ -900,17 +910,38 @@ def _maybe_write_coverage(
         files.add(_relpath(m.path, target))
     for f in vuln_findings:
         for evidence in f.reachability.evidence:
-            # Evidence lines look like ``src/x.py:10`` or with a
-            # ``[test]`` tag — strip both before recording.
             head = evidence.split(":", 1)[0].split(" ", 1)[0]
             if head:
                 files.add(head)
+    for sc in supply_chain_findings:
+        ev = sc.evidence if hasattr(sc, "evidence") else {}
+        for key in ("file", "path", "pth_path"):
+            val = ev.get(key) if isinstance(ev, dict) else None
+            if isinstance(val, str) and val:
+                files.add(_relpath(Path(val), target) if "/" in val else val)
     if not files:
         return
-    record = {
+
+    rules: List[str] = ["osv", "hygiene"]
+    if options:
+        if options.enable_kev:
+            rules.append("kev")
+        if options.enable_epss:
+            rules.append("epss")
+        if options.enable_reachability:
+            rules.append("reachability")
+        if options.enable_supply_chain:
+            rules.append("supply_chain")
+        if options.enable_llm_review:
+            rules.append("llm_review")
+        if options.enable_triage:
+            rules.append("llm_triage")
+
+    record: Dict[str, Any] = {
         "tool": "sca",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "files_examined": sorted(files),
+        "rules_applied": sorted(rules),
     }
     try:
         _coverage_write_record(output_dir, record, tool_name="sca")

@@ -240,8 +240,10 @@ SupplyChainKind = Literal[
     "typosquat_candidate",
     "typosquat_domain",
     "recent_publish",
+    "version_publish",
     "maintainer_change",
     "maintainer_account_change",
+    "low_bus_factor",
     "install_hook_suspicious",
     "binary_in_tests",
     "large_obfuscated_artefact",
@@ -252,6 +254,7 @@ SupplyChainKind = Literal[
     "git_tag_drift",
     "gha_action_ref_drift",
     "version_diff_anomaly",
+    "sentinel_match",
 ]
 
 
