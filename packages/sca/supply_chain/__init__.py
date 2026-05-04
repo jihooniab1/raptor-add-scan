@@ -49,6 +49,7 @@ from . import git_drift as _git_drift
 from . import install_hooks as _install_hooks
 from . import python_imports as _python_imports
 from . import registry_metadata as _registry_metadata
+from . import sentinel as _sentinel
 from . import typosquat as _typosquat
 from . import typosquat_domain as _typosquat_domain
 
@@ -82,6 +83,9 @@ def evaluate(
 
     for hit in _install_hooks.scan_manifests(manifests_list, deps_list):
         out.append(_install_hook_to_finding(hit))
+
+    for sh in _sentinel.scan_deps(deps_list):
+        out.append(_sentinel_to_finding(sh))
 
     for ts in _typosquat.scan_deps(deps_list):
         out.append(_typosquat_to_finding(ts))
@@ -142,6 +146,30 @@ def _install_hook_to_finding(
         },
         severity=hit.severity,             # type: ignore[arg-type]
         confidence=hit.confidence,
+    )
+
+
+def _sentinel_to_finding(
+    sh: _sentinel.SentinelHit,
+) -> SupplyChainFinding:
+    return SupplyChainFinding(
+        finding_id=(
+            f"sca:supplychain:sentinel_match:"
+            f"{sh.dependency.ecosystem}:{sh.dependency.name}:"
+            f"{sh.dependency.version or '*'}:{sh.ref}"
+        ),
+        kind="sentinel_match",
+        dependency=sh.dependency,
+        detail=(
+            f"'{sh.dependency.name}' matches known-malicious package: "
+            f"{sh.incident}"
+        ),
+        evidence={
+            "incident": sh.incident,
+            "ref": sh.ref,
+        },
+        severity=sh.severity,                 # type: ignore[arg-type]
+        confidence=sh.confidence,
     )
 
 
