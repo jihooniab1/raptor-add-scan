@@ -29,6 +29,7 @@ in the only writeable surface available to us.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,18 @@ from typing import Optional
 from . import ResolverResult, _check_tool, _run
 
 logger = logging.getLogger(__name__)
+
+
+def _real_python() -> str:
+    """Return the realpath of the running Python interpreter.
+
+    ``sys.executable`` may live under ``$HOME`` (e.g. pyenv, asdf,
+    user-installed Python) — but the sandbox uses ``fake_home=True``
+    which hides ``$HOME`` from the child. Resolving the symlink chain
+    to the underlying binary (typically under ``/usr/bin/``) makes the
+    interpreter reachable inside the sandbox.
+    """
+    return os.path.realpath(sys.executable)
 
 
 # Marker substrings pip prints when it hits PEP 668. Lower-cased
@@ -212,7 +225,7 @@ class PipResolver:
             shutil.rmtree(venv_dir, ignore_errors=True)
         try:
             proc = _run(
-                [sys.executable, "-m", "venv",
+                [_real_python(), "-m", "venv",
                  "--without-pip",
                  venv_dir.name],
                 cwd=project_dir, timeout=timeout,

@@ -127,24 +127,40 @@ class Resolver(Protocol):
 # Shared subprocess helper
 # ---------------------------------------------------------------------------
 
+# Cache: tool availability is stable for the lifetime of the process.
+# Resolvers and the cascade orchestrator each probe `is_available`
+# (``<tool> --version``) independently — without caching, ``npm
+# --version`` (which is genuinely ~1s on most systems) gets invoked
+# 3-4× per scan and dominates short-scan wall-clock time.
+_CHECK_TOOL_CACHE: "dict[tuple, bool]" = {}
+
+
 def _check_tool(cmd: list, *, timeout: int = 5) -> bool:
     """Return True if running ``cmd`` exits 0 and writes something to
-    stdout (used as ``<tool> --version`` availability probe).
+    stdout/stderr (used as ``<tool> --version`` availability probe).
 
     Runs unsandboxed: the probe is a RAPTOR-chosen command (``<tool>
     --version``) reading no attacker-controlled input. Going through
     :func:`core.sandbox.run` for every availability check would burn
     a namespace + Landlock setup on every cascade attempt, which is
     measurable (~50ms × 3 resolvers = visible startup latency).
+
+    Result is cached per-process. Tool installation/removal during a
+    single scan is not a use case we support.
     """
+    key = tuple(cmd)
+    if key in _CHECK_TOOL_CACHE:
+        return _CHECK_TOOL_CACHE[key]
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
         )
-        return proc.returncode == 0 and bool(
+        result = proc.returncode == 0 and bool(
             proc.stdout.strip() or proc.stderr.strip())
     except (FileNotFoundError, subprocess.SubprocessError, OSError):
-        return False
+        result = False
+    _CHECK_TOOL_CACHE[key] = result
+    return result
 
 
 def _run(

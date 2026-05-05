@@ -31,7 +31,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from ..models import Confidence, Dependency, Manifest
@@ -101,6 +101,14 @@ def scan_target(
     fallback_manifest: Optional[Manifest] = (
         manifests_list[0] if manifests_list else None)
 
+    # Per-scan cache: a popular-near-miss check is purely a function
+    # of the host string and the popular set, both stable across the
+    # whole walk. The same host appears in many files (URLs in
+    # docstrings, comments, generated code) — recomputing the
+    # Damerau-Levenshtein matrix per occurrence dominates runtime.
+    # Caching collapses 1.2M DL calls (raptor on itself) to ~ 15K.
+    near_miss_cache: Dict[str, Optional[Tuple[int, str]]] = {}
+
     out: List[TyposquatDomainFinding] = []
     for src in _walk_sources(target, max_depth=max_depth):
         if _is_test_file(src, target):
@@ -118,7 +126,11 @@ def scan_target(
                 continue
             if host in popular:
                 continue
-            best = _nearest_popular(host, popular)
+            if host in near_miss_cache:
+                best = near_miss_cache[host]
+            else:
+                best = _nearest_popular(host, popular)
+                near_miss_cache[host] = best
             if best is None:
                 continue
             distance, nearest = best
@@ -164,10 +176,20 @@ def _load_popular_domains() -> Set[str]:
 
 
 def _hosts_in(text: str) -> Iterable[Tuple[str, int]]:
+    """Yield ``(host, line_number)`` for every URL in ``text``.
+
+    Line numbers are computed by walking forward from the previous
+    match's offset rather than re-scanning the whole text from 0 per
+    match — the naive ``text.count('\\n', 0, m.start())`` form is
+    O(matches × text_length), which dominated scan time on URL-heavy
+    source files (e.g. files with many docstring URLs).
+    """
+    last_pos = 0
+    last_line = 1
     for m in _URL_RE.finditer(text):
-        host = m.group("host").lower()
-        line = text.count("\n", 0, m.start()) + 1
-        yield host, line
+        last_line += text.count("\n", last_pos, m.start())
+        last_pos = m.start()
+        yield m.group("host").lower(), last_line
 
 
 def _nearest_popular(
