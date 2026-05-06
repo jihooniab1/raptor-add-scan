@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
+from core.llm.task_types import TaskType
 from ..models import SupplyChainFinding
 from . import (
     StageResult,
@@ -109,7 +110,7 @@ def _review_one(
             "ecosystem": TaintedString(value=ecosystem, trust="trusted"),
         },
         schema_cls=BinaryInTestsVerdict,
-        task_type="sca_binary_in_tests_review",
+        task_type=TaskType.ANALYSE,
     )
 
     if result.error or result.model is None:

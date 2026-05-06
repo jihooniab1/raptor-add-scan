@@ -196,3 +196,23 @@ class UpgradeImpactVerdict(BaseModel):
         max_length=500,
         description="One-line operator-facing summary",
     )
+
+
+class UpgradeImpactPrefilter(BaseModel):
+    """Cheap-tier verdict — does this upgrade need full analysis?
+
+    Asymmetric framing: only ``clear_safe`` short-circuits. Anything
+    else (including ``needs_analysis`` for ambiguous cases and any
+    risky-looking changes) falls through to the full
+    :class:`UpgradeImpactVerdict` reviewer. The cheap model is never
+    asked to greenlight a major migration — it's a filter for the
+    obviously-safe cases (semver patch bump, type-additive changelog,
+    no API surface in changelog).
+    """
+
+    verdict: Literal["clear_safe", "needs_analysis"]
+    reasoning: str = Field(
+        default="",
+        max_length=500,
+        description="One-or-two-sentence justification",
+    )

@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
+from core.llm.task_types import TaskType
 from ..models import Confidence, SupplyChainFinding
 from . import (
     StageResult,
@@ -108,7 +109,7 @@ def _review_one(
         untrusted_blocks=blocks_t,
         slots=slots,
         schema_cls=InstallHookVerdict,
-        task_type="sca_install_hook_review",
+        task_type=TaskType.ANALYSE,
     )
 
     if result.error:
@@ -126,7 +127,7 @@ def _review_one(
         primary_result=result,
         verdict_field="verdict",
         high_severity_values=("malicious", "suspicious"),
-        task_type="sca_install_hook_review",
+        task_type=TaskType.ANALYSE,
     )
 
     verdict: Optional[InstallHookVerdict] = result.model  # type: ignore[assignment]

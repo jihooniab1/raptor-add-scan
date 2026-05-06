@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from core.llm.task_types import TaskType
 from ..models import Dependency
 from . import (
     StageResult,
@@ -64,7 +65,7 @@ def assess_maintainer_trust(
             ),
         },
         schema_cls=MaintainerTrustVerdict,
-        task_type="sca_maintainer_trust",
+        task_type=TaskType.CLASSIFY,
     )
 
     if result.error or result.model is None:

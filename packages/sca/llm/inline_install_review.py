@@ -20,6 +20,7 @@ import logging
 from pathlib import Path
 from typing import List
 
+from core.llm.task_types import TaskType
 from ..models import Confidence, Dependency, PinStyle
 from . import (
     StageResult,
@@ -89,7 +90,7 @@ def review_inline_installs(
             "file_type": TaintedString(value=source_kind, trust="trusted"),
         },
         schema_cls=InlineInstallVerdict,
-        task_type="sca_inline_install_review",
+        task_type=TaskType.ANALYSE,
     )
 
     if result.error or result.model is None:

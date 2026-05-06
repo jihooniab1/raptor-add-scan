@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from core.http import HttpClient
+from core.llm.task_types import TaskType
 from ..models import Dependency
 from . import (
     StageResult,
@@ -119,7 +120,7 @@ def review_version_diff(
         untrusted_blocks=tuple(blocks),
         slots=slots,
         schema_cls=VersionDiffVerdict,
-        task_type="sca_version_diff_review",
+        task_type=TaskType.ANALYSE,
     )
 
     if result.error or result.model is None:

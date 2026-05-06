@@ -23,6 +23,7 @@ import json as _json
 import logging
 from typing import Any, Dict, List, Optional
 
+from core.llm.task_types import TaskType
 from . import (
     StageResult,
     TaintedString,
@@ -93,7 +94,7 @@ def triage_findings(
             ),
         },
         schema_cls=TriageResult,
-        task_type="sca_triage",
+        task_type=TaskType.CLASSIFY,
     )
 
     if result.error or result.model is None:
