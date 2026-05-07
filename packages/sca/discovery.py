@@ -92,6 +92,7 @@ MANIFEST_FILENAMES = {
     "Pipfile": "PyPI",
     "Pipfile.lock": "PyPI",
     "poetry.lock": "PyPI",
+    "uv.lock": "PyPI",
     "setup.py": "PyPI",            # legacy; lower-priority parser
     "setup.cfg": "PyPI",            # legacy
 
@@ -174,6 +175,7 @@ LOCKFILE_NAMES: Set[str] = {
     "shrinkwrap.json",
     "Pipfile.lock",
     "poetry.lock",
+    "uv.lock",
     "Cargo.lock",
     "go.sum",
     "Gemfile.lock",

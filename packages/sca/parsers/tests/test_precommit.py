@@ -325,3 +325,140 @@ def test_raptor_cve_diff_precommit_config():
     assert "mypy" in by_name
     assert by_name["ruff"].ecosystem == "PyPI"
     assert by_name["mypy"].ecosystem == "PyPI"
+
+
+# ---------------------------------------------------------------------------
+# additional_dependencies extraction
+# ---------------------------------------------------------------------------
+
+
+def test_additional_dependencies_extracted_for_pypi_hook(tmp_path):
+    """``mirrors-mypy`` typically has ``additional_dependencies:
+    ["pydantic>=2.5", "types-PyYAML"]``. Each becomes a PyPI
+    Dependency in the ``precommit_additional`` source kind."""
+    p = _write(tmp_path, """\
+repos:
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        additional_dependencies: ["pydantic>=2.5", "types-PyYAML"]
+""")
+    deps = parse(p)
+    by_name = {d.name: d for d in deps}
+    # The mypy main row + two additional dep rows.
+    assert "mypy" in by_name
+    assert "pydantic" in by_name
+    assert "types-PyYAML" in by_name
+    assert by_name["pydantic"].ecosystem == "PyPI"
+    assert by_name["pydantic"].version == ">=2.5"
+    assert by_name["pydantic"].pin_style == PinStyle.RANGE
+    assert by_name["pydantic"].source_kind == "precommit_additional"
+    assert by_name["pydantic"].source_extra["hook_id"] == "mypy"
+
+
+def test_additional_dependencies_inherits_npm_for_npm_hook(tmp_path):
+    """``mirrors-eslint`` is npm — its additional_dependencies
+    should also be classified as npm."""
+    p = _write(tmp_path, """\
+repos:
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.10.0
+    hooks:
+      - id: eslint
+        additional_dependencies: ["eslint-plugin-foo@2.0.0"]
+""")
+    deps = parse(p)
+    by_name = {d.name: d for d in deps}
+    assert "eslint-plugin-foo" in by_name
+    assert by_name["eslint-plugin-foo"].ecosystem == "npm"
+    assert by_name["eslint-plugin-foo"].version == "2.0.0"
+
+
+def test_additional_dependencies_unmapped_repo_defaults_to_pypi(tmp_path):
+    """Unmapped repo + additional_dependencies → default to PyPI
+    (the dominant pre-commit shape)."""
+    p = _write(tmp_path, """\
+repos:
+  - repo: https://github.com/myorg/custom-hook
+    rev: v1.0.0
+    hooks:
+      - id: x
+        additional_dependencies: ["helper==2.0"]
+""")
+    deps = parse(p)
+    addl = [d for d in deps if d.source_kind == "precommit_additional"]
+    assert len(addl) == 1
+    assert addl[0].name == "helper"
+    assert addl[0].version == "2.0"
+    assert addl[0].ecosystem == "PyPI"
+    assert addl[0].pin_style == PinStyle.EXACT
+
+
+def test_additional_dependencies_local_hook_skipped(tmp_path):
+    """``repo: local`` hooks shouldn't surface their additional_deps
+    — local hook shells out to a script with whatever's already
+    installed."""
+    p = _write(tmp_path, """\
+repos:
+  - repo: local
+    hooks:
+      - id: my-script
+        entry: scripts/check.py
+        additional_dependencies: ["foo==1.0"]
+""")
+    deps = parse(p)
+    assert deps == []
+
+
+def test_pep508_extras_stripped(tmp_path):
+    """``pydantic[email]>=2.5`` — extras don't survive into the
+    package name (purl uses bare name)."""
+    p = _write(tmp_path, """\
+repos:
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        additional_dependencies: ["pydantic[email]>=2.5"]
+""")
+    deps = parse(p)
+    addl = [d for d in deps if d.source_kind == "precommit_additional"]
+    assert len(addl) == 1
+    assert addl[0].name == "pydantic"
+    assert addl[0].version == ">=2.5"
+
+
+def test_additional_dependencies_string_form_skipped(tmp_path):
+    """``additional_dependencies: "foo"`` (string, not list) — non-
+    standard, skip silently."""
+    p = _write(tmp_path, """\
+repos:
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        additional_dependencies: "foo"
+""")
+    deps = parse(p)
+    addl = [d for d in deps if d.source_kind == "precommit_additional"]
+    assert addl == []
+
+
+def test_multiple_hooks_each_with_their_own_additional_deps(tmp_path):
+    """Two hooks in the same repo, each with their own
+    ``additional_dependencies`` list."""
+    p = _write(tmp_path, """\
+repos:
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        additional_dependencies: ["pydantic>=2.5"]
+      - id: mypy-strict
+        additional_dependencies: ["types-PyYAML"]
+""")
+    deps = parse(p)
+    addl = {d.name: d for d in deps if d.source_kind == "precommit_additional"}
+    assert addl["pydantic"].source_extra["hook_id"] == "mypy"
+    assert addl["types-PyYAML"].source_extra["hook_id"] == "mypy-strict"

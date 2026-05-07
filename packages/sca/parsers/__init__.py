@@ -157,6 +157,7 @@ from . import pom                 # noqa: E402,F401
 from . import precommit           # noqa: E402,F401
 from . import pyproject           # noqa: E402,F401
 from . import requirements        # noqa: E402,F401
+from . import uv_lock             # noqa: E402,F401
 from . import vcpkg               # noqa: E402,F401
 from . import yarn_lock           # noqa: E402,F401
 

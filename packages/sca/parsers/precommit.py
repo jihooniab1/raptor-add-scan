@@ -112,7 +112,168 @@ def parse(path: Path) -> List[Dependency]:
         dep = _build_dep(entry, declared_in=path, repo_map=repo_map)
         if dep is not None:
             out.append(dep)
+        # ``additional_dependencies`` — extra PyPI / npm packages
+        # the hook needs at runtime. Each entry is a PEP 508 / npm
+        # spec string. Common in ``mirrors-mypy`` configs:
+        #   additional_dependencies: ["pydantic>=2.5", "types-PyYAML"]
+        out.extend(_extract_additional_deps(entry, declared_in=path))
     return out
+
+
+def _extract_additional_deps(
+    entry: Any, *, declared_in: Path,
+) -> List[Dependency]:
+    """Extract ``hooks[].additional_dependencies`` entries.
+
+    Each hook may declare extra runtime deps; pre-commit installs
+    them into the hook's isolated environment. The string format
+    follows the hook's underlying language (PyPI for ruff / mypy /
+    black hooks, npm for eslint / prettier mirror hooks). We
+    classify by reasonable heuristic: if the hook's repo has a
+    mapped ecosystem (``PyPI`` / ``npm`` / etc. in the curated
+    map), additional_dependencies inherit that ecosystem. For
+    unmapped repos we default to ``PyPI`` since the dominant
+    pre-commit shape is Python-based.
+    """
+    if not isinstance(entry, dict):
+        return []
+    repo = entry.get("repo")
+    if not isinstance(repo, str):
+        return []
+    if repo in ("local", "meta"):
+        return []
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list):
+        return []
+
+    repo_map = _load_repo_map()
+    canonical = _canonicalise_repo(repo)
+    if canonical:
+        mapping = repo_map.get(canonical)
+        ecosystem = mapping["ecosystem"] if mapping else "PyPI"
+    else:
+        ecosystem = "PyPI"
+
+    out: List[Dependency] = []
+    for hook in hooks:
+        if not isinstance(hook, dict):
+            continue
+        hook_id = hook.get("id") if isinstance(hook.get("id"), str) else None
+        addl = hook.get("additional_dependencies")
+        if not isinstance(addl, list):
+            continue
+        for spec in addl:
+            if not isinstance(spec, str) or not spec.strip():
+                continue
+            dep = _build_addl_dep(
+                spec=spec.strip(),
+                ecosystem=ecosystem,
+                declared_in=declared_in,
+                hook_id=hook_id,
+                hook_repo=repo,
+            )
+            if dep is not None:
+                out.append(dep)
+    return out
+
+
+def _build_addl_dep(
+    *,
+    spec: str,
+    ecosystem: str,
+    declared_in: Path,
+    hook_id: Optional[str],
+    hook_repo: str,
+) -> Optional[Dependency]:
+    """Build a Dependency from one ``additional_dependencies``
+    string. The grammar is the underlying language's install
+    spec: PEP 508 for PyPI (``pydantic>=2.5``, ``types-PyYAML``),
+    npm spec for npm (``@types/node@20``, ``eslint-plugin-foo``).
+
+    For first cut we use a simple split heuristic — extract the
+    name (everything up to the first ``>`` / ``=`` / ``<`` /
+    ``~`` / ``@`` after position 0) and treat the rest as the
+    version constraint. Sufficient for SBOM visibility; CVE
+    matching uses the package name + parsed version.
+    """
+    # PyPI extras like ``foo[bar]`` strip the brackets for purl /
+    # name. ``foo[bar]>=1.0`` → name=``foo``, version=``>=1.0``.
+    name, version, pin_style = _classify_addl_spec(spec, ecosystem)
+    if not name:
+        return None
+    purl_type = _eco_to_purl(ecosystem)
+    purl = f"pkg:{purl_type}/{name}"
+    if version:
+        purl += f"@{version}"
+    return Dependency(
+        ecosystem=ecosystem,
+        name=name,
+        version=version,
+        declared_in=declared_in,
+        scope="dev",
+        is_lockfile=False,
+        pin_style=pin_style,
+        direct=True,
+        purl=purl,
+        parser_confidence=Confidence(
+            "medium",
+            reason=(
+                f"pre-commit additional_dependencies spec {spec!r} "
+                f"on hook {hook_id or '<unknown>'} from {hook_repo}"
+            ),
+        ),
+        source_kind="precommit_additional",
+        source_extra={
+            "spec": spec,
+            "hook_id": hook_id,
+            "hook_repo": hook_repo,
+        },
+    )
+
+
+def _classify_addl_spec(
+    spec: str, ecosystem: str,
+) -> "tuple[str, Optional[str], PinStyle]":
+    """Split a PEP 508 / npm install spec into (name, version,
+    pin_style)."""
+    import re as _re
+    if ecosystem == "npm" and spec.startswith("@"):
+        # Scoped npm: ``@scope/name@version``.
+        # First ``@`` is the scope marker; tag separator is the
+        # second.
+        tail_match = _re.search(r"^(@[^/]+/[^@<>=~ ]+)([<>=~@].*)?$", spec)
+        if tail_match:
+            name = tail_match.group(1)
+            ver_part = tail_match.group(2) or ""
+            ver_part = ver_part.lstrip("@").strip()
+            return _wrap_version(name, ver_part)
+    # PEP 508 / non-scoped npm — name is everything before the
+    # first comparator / @ / [.
+    m = _re.match(r"^([A-Za-z0-9._\-]+)(\[[^\]]*\])?(.*)$", spec)
+    if not m:
+        return "", None, PinStyle.UNKNOWN
+    name = m.group(1)
+    rest = m.group(3).strip()
+    return _wrap_version(name, rest)
+
+
+def _wrap_version(
+    name: str, ver_part: str,
+) -> "tuple[str, Optional[str], PinStyle]":
+    if not ver_part:
+        return name, None, PinStyle.WILDCARD
+    if ver_part.startswith("=="):
+        return name, ver_part[2:].strip(), PinStyle.EXACT
+    if ver_part.startswith("^"):
+        return name, ver_part[1:].strip(), PinStyle.CARET
+    if ver_part.startswith("~"):
+        return name, ver_part[1:].strip(), PinStyle.TILDE
+    if any(ch in ver_part for ch in "<>") or "," in ver_part:
+        return name, ver_part, PinStyle.RANGE
+    if ver_part.startswith("="):
+        return name, ver_part.lstrip("=").strip(), PinStyle.EXACT
+    # Fallback: bare version.
+    return name, ver_part.lstrip("@").strip() or None, PinStyle.EXACT
 
 
 # ---------------------------------------------------------------------------
