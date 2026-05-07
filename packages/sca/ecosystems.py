@@ -12,6 +12,8 @@ from typing import Optional
 KNOWN_ECOSYSTEMS = (
     "PyPI", "npm", "Maven", "Cargo", "Go",
     "RubyGems", "NuGet", "Packagist",
+    # C/C++ ecosystems (C14):
+    "vcpkg", "ConanCenter",
 )
 
 _LOOKUP = {e.lower(): e for e in KNOWN_ECOSYSTEMS}

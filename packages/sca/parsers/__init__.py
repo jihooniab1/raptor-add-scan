@@ -136,7 +136,9 @@ def _resolve(
 # Order is irrelevant — the registry is keyed by filename.
 from . import cargo               # noqa: E402,F401
 from . import composer            # noqa: E402,F401
+from . import conan               # noqa: E402,F401
 from . import gemfile             # noqa: E402,F401
+from . import gitmodules          # noqa: E402,F401
 from . import gomod               # noqa: E402,F401
 from . import gradle_dsl          # noqa: E402,F401
 from . import gradle_lockfile     # noqa: E402,F401
@@ -150,6 +152,7 @@ from . import poetry_lock         # noqa: E402,F401
 from . import pom                 # noqa: E402,F401
 from . import pyproject           # noqa: E402,F401
 from . import requirements        # noqa: E402,F401
+from . import vcpkg               # noqa: E402,F401
 from . import yarn_lock           # noqa: E402,F401
 
 

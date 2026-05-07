@@ -122,6 +122,19 @@ MANIFEST_FILENAMES = {
     # PHP
     "composer.json": "Packagist",
     "composer.lock": "Packagist",
+
+    # C / C++ — vcpkg manifest mode + Conan + git submodules.
+    # Conan and vcpkg are queried via OSV's ``ConanCenter`` /
+    # ``vcpkg`` ecosystems. ``.gitmodules`` rows aren't OSV-
+    # queryable today (no ``Git`` ecosystem); they appear in the
+    # SBOM for visibility but the report's CVE matcher skips
+    # them. The discovery layer needs them registered so the
+    # parser dispatcher routes correctly.
+    "vcpkg.json": "vcpkg",
+    "conanfile.txt": "ConanCenter",
+    "conanfile.py": "ConanCenter",
+    "conan.lock": "ConanCenter",
+    ".gitmodules": "GitHub",       # SCA-internal — see gitmodules.py
 }
 
 # Filenames that match additional patterns (extension-based).
@@ -145,6 +158,7 @@ LOCKFILE_NAMES: Set[str] = {
     "packages.lock.json",
     "composer.lock",
     "gradle.lockfile",
+    "conan.lock",
 }
 
 # Requirements*.txt convention — anything matching `requirements*.txt`
