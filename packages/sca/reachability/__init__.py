@@ -231,6 +231,20 @@ def scan(
                 inventory=shared_inventory,
             )
 
+        from .java_function_level import (
+            build_maven_symbol_map,
+            refine_maven_verdicts,
+        )
+        maven_symbols = build_maven_symbol_map(osv_results)
+        if maven_symbols:
+            shared_inventory = _shared_inventory(target, shared_inventory)
+            refine_maven_verdicts(
+                deps_list, out,
+                target=target,
+                maven_symbol_map=maven_symbols,
+                inventory=shared_inventory,
+            )
+
     return out
 
 
