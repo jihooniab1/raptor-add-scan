@@ -271,6 +271,7 @@ SupplyChainKind = Literal[
     "git_tag_drift",
     "gha_action_ref_drift",
     "gha_action_sunset",
+    "gha_action_outdated",
     "version_diff_anomaly",
     "sentinel_match",
 ]

@@ -45,6 +45,7 @@ from ..models import (
 from . import artefacts as _artefacts
 from . import exfil_destinations as _exfil
 from . import gha_drift as _gha_drift
+from . import gha_freshness as _gha_freshness
 from . import gha_sunset as _gha_sunset
 from . import git_drift as _git_drift
 from . import install_hooks as _install_hooks
@@ -64,6 +65,7 @@ def evaluate(
     *,
     pypi_client=None,
     npm_client=None,
+    github_actions_client=None,
     cache=None,
 ) -> List[SupplyChainFinding]:
     """Run every mechanical supply-chain check.
@@ -72,12 +74,14 @@ def evaluate(
         target: project root (used by artefact / source walks).
         manifests: the discovery output (manifests + lockfiles).
         deps: the joined dep list — typically post-``join.join``.
-        pypi_client / npm_client: optional registry clients used by the
-            ``recent_publish``/``maintainer_change``/
-            ``maintainer_account_change`` detectors. When absent, those
-            detectors are no-ops so we don't make uncached HTTP calls
-            from a unit test or in a context where the orchestrator
-            doesn't have access to the registry layer.
+        pypi_client / npm_client / github_actions_client: optional
+            registry clients used by detectors that need
+            registry-side metadata. When absent, those detectors
+            are no-ops so we don't make uncached HTTP calls from
+            unit tests or in offline mode. ``github_actions_client``
+            powers ``gha_freshness`` (major-version-behind
+            detection); when None, only the curated sunset list
+            fires.
     """
     manifests_list = list(manifests)
     deps_list = list(deps)
@@ -111,6 +115,13 @@ def evaluate(
     # ``"GitHub Actions"``). No additional walk needed; the sunset
     # check is a pure dep-list filter against the curated list.
     out.extend(_gha_sunset.scan_dependencies(deps_list))
+
+    # Major-version freshness — opt-in via ``github_actions_client``
+    # (network-bound; pipeline wires it from default_client + cache).
+    if github_actions_client is not None:
+        out.extend(_gha_freshness.scan_dependencies(
+            deps_list, client=github_actions_client,
+        ))
 
     for gd in _git_drift.scan_deps(deps_list):
         out.append(_git_drift_to_finding(gd))

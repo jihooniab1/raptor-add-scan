@@ -305,16 +305,19 @@ def run_sca(
     supply_chain_findings = []
     if options.enable_supply_chain:
         # Construct registry clients for the metadata-driven detectors
-        # (recent_publish / maintainer_change / maintainer_account_change).
-        # Same offline + cache config as the OSV path.
+        # (recent_publish / maintainer_change / maintainer_account_change /
+        # gha_action_outdated). Same offline + cache config as the OSV path.
         from .registries.npm import NpmClient
         from .registries.pypi import PyPIClient
+        from .registries.github_actions import GitHubActionsClient
         sc_pypi = PyPIClient(http, cache, offline=options.offline)
         sc_npm = NpmClient(http, cache, offline=options.offline)
+        sc_gha = GitHubActionsClient(http, cache, offline=options.offline)
         supply_chain_findings = evaluate_supply_chain(
             target, manifests, joined,
             pypi_client=sc_pypi,
             npm_client=sc_npm,
+            github_actions_client=sc_gha,
             cache=cache,
         )
 
