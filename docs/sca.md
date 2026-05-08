@@ -164,6 +164,25 @@ can flag them. Use `--no-llm` to force mechanical-only mode regardless.
   # exits 1 if any registry is unreachable; useful behind a corporate proxy
 ```
 
+### PR gate: only fail on regressions
+
+A turn-key workflow lives at `.github/workflows/sca-pr-gate.yml`.
+Triggered on PRs touching any manifest / lockfile / Dockerfile, it:
+
+1. Scans the PR head.
+2. Scans `main` as baseline.
+3. Diffs the two findings sets.
+4. Posts the markdown delta as a PR comment (idempotent — updates the
+   existing bot comment instead of creating new ones on every push).
+5. Mirrors the same content to the workflow run's step summary.
+6. Fails the build only when **new** high+ findings appear; resolved
+   ones don't penalise the PR.
+
+Operator-tunable: change `--fail-on-severity high` in the workflow to
+`medium` for stricter gating, or to `critical` for noisier projects.
+The diff command's exit code is 0 = no regression at threshold,
+1 = regression found, 2 = inputs invalid.
+
 ## Limitations + follow-ups
 
 - **Sandboxing** — registry HTTP calls go through `packages/sca/http.py` directly today. The sandbox seam will be retrofitted once `core/sandbox/` lands.
