@@ -79,6 +79,10 @@ class RunOptions:
                                           # eval. Disabled implicitly when
                                           # ``offline`` is set; explicit
                                           # disable via this flag.
+    emit_spdx_sbom: bool = False          # write sbom.spdx.json alongside
+                                           # the CycloneDX SBOM. SPDX 2.3
+                                           # is mandated by some compliance
+                                           # programmes (NTIA, FedRAMP).
     emit_html_report: bool = False        # write report.html alongside
                                            # report.md. Off by default —
                                            # most tooling reads
@@ -569,6 +573,19 @@ def run_sca(
         vuln_findings=vuln_findings,
         target_name=target.name,
     )
+
+    # Optional SPDX 2.3 SBOM alongside CycloneDX. Some compliance
+    # programmes mandate SPDX (NTIA's Minimum Elements treats
+    # both as acceptable; specific procurement programmes may
+    # require one). Default off because most tooling consumes
+    # CycloneDX directly.
+    if options.emit_spdx_sbom:
+        from .sbom_spdx import write_sbom_spdx_json
+        write_sbom_spdx_json(
+            output_dir / "sbom.spdx.json",
+            deps=joined,
+            target_name=target.name,
+        )
 
     # Re-read the rows we just wrote — SARIF emission consumes the
     # canonical row shape, including the suppression overlay.

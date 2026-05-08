@@ -144,6 +144,9 @@ def _parse_analyse(argv):
                    help="write a self-contained report.html alongside "
                         "report.md (CI artefact uploads / compliance "
                         "attachments)")
+    p.add_argument("--spdx", action="store_true",
+                   help="write an SPDX 2.3 SBOM (sbom.spdx.json) "
+                        "alongside the CycloneDX one")
     p.add_argument("--include-commented", action="store_true",
                    help="parse commented-out version-pinned lines as deps; "
                         "matching CVEs surface at info severity")
@@ -260,6 +263,7 @@ def _run_analyse(argv):
         enable_reachability=not args.no_reachability,
         enable_supply_chain=not args.no_supply_chain,
         emit_html_report=args.html,
+        emit_spdx_sbom=args.spdx,
         include_commented=args.include_commented,
         enable_inline_installs=not args.no_inline_installs,
         enable_transitive_expansion=not args.no_resolve_transitive,
