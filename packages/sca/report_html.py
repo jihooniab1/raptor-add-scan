@@ -298,6 +298,16 @@ def _vuln_card(f: VulnFinding) -> str:
             parts.append(
                 f"<li><strong>Metasploit:</strong> {mods}{extra}</li>"
             )
+        if ev.github_poc_urls:
+            poc_links = ", ".join(
+                f"<a href=\"{escape(u)}\">{escape(u)}</a>"
+                for u in ev.github_poc_urls[:2]
+            )
+            extra = (f" (+{len(ev.github_poc_urls) - 2} more)"
+                      if len(ev.github_poc_urls) > 2 else "")
+            parts.append(
+                f"<li><strong>GitHub PoC:</strong> {poc_links}{extra}</li>"
+            )
     parts.append(
         f"<li><small>Source: <code>{escape(str(dep.declared_in))}"
         f"</code> · scope: {escape(dep.scope)} · "

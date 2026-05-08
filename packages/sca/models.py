@@ -244,11 +244,17 @@ class ExploitEvidence:
     kev_listed: bool = False
     edb_ids: List[int] = field(default_factory=list)
     msf_modules: List[str] = field(default_factory=list)
+    github_poc_urls: List[str] = field(default_factory=list)
 
     @property
     def has_any(self) -> bool:
         """True iff at least one signal fired."""
-        return self.kev_listed or bool(self.edb_ids) or bool(self.msf_modules)
+        return (
+            self.kev_listed
+            or bool(self.edb_ids)
+            or bool(self.msf_modules)
+            or bool(self.github_poc_urls)
+        )
 
 
 HygieneKind = Literal[

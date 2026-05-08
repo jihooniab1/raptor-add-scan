@@ -79,7 +79,7 @@ def build_corpus(
         http = default_client()
 
     if sources is None:
-        sources = ["kev", "epss", "exploitdb", "metasploit"]
+        sources = ["kev", "epss", "exploitdb", "metasploit", "github_poc"]
 
     results: List[BuildResult] = []
     for source in sources:
@@ -92,6 +92,8 @@ def build_corpus(
                 results.append(_build_exploitdb(out_dir, http))
             elif source == "metasploit":
                 results.append(_build_metasploit(out_dir, http))
+            elif source == "github_poc":
+                results.append(_build_github_poc(out_dir, http))
             else:
                 results.append(BuildResult(
                     source=source, written=False,
@@ -310,6 +312,101 @@ def _build_metasploit(out_dir: Path, http: Any) -> BuildResult:
         out_dir / "metasploit_signals.json", output,
         source="metasploit", record_count=len(signals),
     )
+
+
+def _build_github_poc(out_dir: Path, http: Any) -> BuildResult:
+    """Extract github.com PoC URLs from the Exploit-DB index.
+
+    Many EDB entries link to a GitHub repo (the original PoC
+    publication) via the ``source_url`` or ``application_url``
+    columns. We re-parse the EDB CSV (a single network fetch
+    we do anyway for the EDB build) and emit a Tier-3
+    boolean+URLs signal per CVE.
+
+    Why a separate signal: KEV says "exploited in the wild",
+    EDB says "an exploit entry exists in our DB", MSF says
+    "a Metasploit module exists". A GitHub PoC URL is a fourth
+    independent signal: "a public PoC repo is one click away
+    on GitHub". Operators triaging triage further when they can
+    inspect the actual PoC code.
+
+    Strict licensing: we ONLY store the URL — the URL itself
+    is a public observable fact (the existence of a repo).
+    No PoC code is fetched or stored.
+    """
+    import csv
+    import io
+
+    EDB_CSV_URL = (
+        "https://gitlab.com/exploit-database/exploitdb/-/raw/main/"
+        "files_exploits.csv"
+    )
+    raw = http.get_bytes(EDB_CSV_URL, max_bytes=64 * 1024 * 1024)
+    text = raw.decode("utf-8", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    cve_to_urls: Dict[str, List[str]] = {}
+    rows_seen = 0
+    for row in reader:
+        rows_seen += 1
+        codes_raw = row.get("codes") or ""
+        if "CVE-" not in codes_raw:
+            continue
+        cves = [c.strip() for c in codes_raw.split(";")
+                 if c.strip().startswith("CVE-")]
+        if not cves:
+            continue
+        urls: List[str] = []
+        for col in ("source_url", "application_url"):
+            url = (row.get(col) or "").strip()
+            if _is_github_poc_url(url):
+                urls.append(url)
+        if not urls:
+            continue
+        for cve in cves:
+            cve_to_urls.setdefault(cve, []).extend(urls)
+    signals = {
+        cve: {
+            "has_github_poc": True,
+            "github_poc_urls": sorted(set(urls)),
+        }
+        for cve, urls in cve_to_urls.items()
+    }
+    output = {
+        "_source": {
+            "name": "GitHub PoC URLs (derived from Exploit-DB index)",
+            "url": EDB_CSV_URL,
+            "license": (
+                "Derived signal: presence + public URL only. "
+                "Source URLs are public observable facts; the "
+                "PoC code itself is NOT fetched or stored."
+            ),
+            "fetched_at": _utcnow(),
+            "provenance": (
+                "Parses the Exploit-Database files_exploits.csv "
+                "``source_url`` / ``application_url`` columns for "
+                "github.com URLs. Same network fetch as the EDB "
+                "build."
+            ),
+            "rows_scanned": rows_seen,
+        },
+        "signals": dict(sorted(signals.items())),
+    }
+    return _write_if_changed(
+        out_dir / "github_poc_signals.json", output,
+        source="github_poc", record_count=len(signals),
+    )
+
+
+def _is_github_poc_url(url: str) -> bool:
+    """Match ``https://github.com/<owner>/<repo>(/...)?`` shape.
+
+    Filters out the EDB self-references and non-github URLs.
+    Doesn't try to verify the repo *is* a PoC repo — operators
+    inspecting the URL can decide.
+    """
+    if not url:
+        return False
+    return url.startswith(("https://github.com/", "http://github.com/"))
 
 
 def _msf_ref_to_cve(ref: Any) -> Optional[str]:

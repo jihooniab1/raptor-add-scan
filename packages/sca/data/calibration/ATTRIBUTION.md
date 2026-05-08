@@ -55,10 +55,25 @@ attribution requirements for sources where the data license requires it.
   payloads, evasion, post-exploitation, etc.). Same forbidden-
   field-check applies.
 
+### `github_poc_signals.json` — GitHub PoC URLs (derived)
+
+- **License:** Derived signal — presence + public URL only. The URL
+  itself is a public observable fact (the existence of a repo on
+  github.com is not copyrightable). PoC repository content is **not**
+  fetched or stored.
+- **Source:** Re-parses the Exploit-DB index (`files_exploits.csv`)
+  for ``source_url`` / ``application_url`` columns matching
+  ``github.com/...`` patterns. Same network fetch as the EDB build.
+- **What's stored:** `{cve_id: {has_github_poc: true, github_poc_urls: ["https://github.com/...", ...]}}`.
+- **What's NEVER stored:** PoC repository code (clone targets, README
+  content, exploit scripts). Operators inspecting the URL can clone
+  if they want; the corpus stores only the public observable that
+  the URL exists.
+
 ### Tier 2 — future additions
 
-- **GitHub PoC repos** — per-repo licenses vary. URL list only,
-  no clones. Not yet wired (see corpus follow-up plan).
+- **GitHub Advisory Database (GHSA) refs** — already covered indirectly
+  via OSV's GHSA mirror. A separate fetcher would be redundant.
 
 ## RAPTOR-generated artefacts
 

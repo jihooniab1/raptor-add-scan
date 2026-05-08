@@ -426,6 +426,11 @@ def _render_one_vuln(f: VulnFinding, *, omit_source: bool = False) -> str:
             shown = ", ".join(f"`{m}`" for m in ev.msf_modules[:2])
             extra = f" (+{msf_count - 2} more)" if msf_count > 2 else ""
             bullets.append(f"- Metasploit: {shown}{extra}")
+        if ev.github_poc_urls:
+            poc_count = len(ev.github_poc_urls)
+            shown = ", ".join(f"<{u}>" for u in ev.github_poc_urls[:2])
+            extra = f" (+{poc_count - 2} more)" if poc_count > 2 else ""
+            bullets.append(f"- GitHub PoC: {shown}{extra}")
 
     if not omit_source:
         if dep.is_lockfile:

@@ -418,6 +418,7 @@ def _exploit_evidence_summary(ev) -> Optional[Dict[str, Any]]:
         "kev_listed": ev.kev_listed,
         "edb_ids": list(ev.edb_ids),
         "msf_modules": list(ev.msf_modules),
+        "github_poc_urls": list(ev.github_poc_urls),
         "has_any": ev.has_any,
     }
 
