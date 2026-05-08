@@ -132,3 +132,145 @@ def test_no_workflows_dir(tmp_path: Path) -> None:
     result = hash_pin_workflows(tmp_path)
     assert result.changes == []
     assert result.skipped == []
+
+
+# ---------------------------------------------------------------------------
+# Indentation preservation — pre-fix bug ate everything but one char of
+# the leading whitespace, breaking YAML when ``uses:`` was on its own line
+# under a multi-line list item (``- name: Checkout`` then
+# ``        uses: actions/checkout@v6``).
+# ---------------------------------------------------------------------------
+
+
+def test_preserves_multi_space_indentation(monkeypatch, tmp_path: Path) -> None:
+    """``uses:`` on its own line under a list-item header — the
+    pre-fix regex captured only 1 char of leading whitespace and
+    the rewrite collapsed the indent."""
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    yml = workflows / "ci.yml"
+    yml.write_text(
+        "jobs:\n"
+        "  t:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Checkout\n"
+        "        uses: actions/checkout@v6\n"
+        "      - name: Set up Python\n"
+        "        uses: actions/setup-python@v6\n",
+        encoding="utf-8",
+    )
+    _patch_ls_remote(monkeypatch, {
+        ("actions/checkout", "v6"): "0" * 40,
+        ("actions/setup-python", "v6"): "1" * 40,
+    })
+    hash_pin_workflows(tmp_path, write=True)
+    text = yml.read_text()
+    # 8-space indent preserved on every uses: line.
+    for line in text.splitlines():
+        if "uses:" in line and "actions/" in line:
+            assert line.startswith("        uses:"), (
+                f"indent collapsed: {line!r}"
+            )
+    # YAML still parses.
+    import yaml
+    parsed = yaml.safe_load(text)
+    assert parsed["jobs"]["t"]["steps"][0]["uses"].startswith(
+        "actions/checkout@"
+    )
+    assert parsed["jobs"]["t"]["steps"][1]["uses"].startswith(
+        "actions/setup-python@"
+    )
+
+
+def test_preserves_indentation_for_dash_uses_form(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """``- uses: ...`` form (list-item-and-uses-on-same-line) also
+    preserves the line's leading indent, however many spaces it
+    has."""
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    yml = workflows / "ci.yml"
+    yml.write_text(
+        "jobs:\n  t:\n    steps:\n"
+        "      - uses: actions/checkout@v6\n",     # 6-space indent
+        encoding="utf-8",
+    )
+    _patch_ls_remote(monkeypatch, {
+        ("actions/checkout", "v6"): "a" * 40,
+    })
+    hash_pin_workflows(tmp_path, write=True)
+    text = yml.read_text()
+    assert "      - uses:" in text, f"6-space indent + dash lost: {text!r}"
+    import yaml
+    yaml.safe_load(text)              # must still parse
+
+
+def test_preserves_indentation_for_tabs(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Some YAML files use tabs (technically forbidden by spec but
+    GitHub Actions accepts mixed tab+space indent in the wild).
+    Defensive: don't break tab-indented files even though we
+    don't recommend them."""
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    yml = workflows / "ci.yml"
+    # 2-space + tab indent.
+    yml.write_text(
+        "jobs:\n  t:\n    steps:\n"
+        "  \t- uses: actions/checkout@v6\n",
+        encoding="utf-8",
+    )
+    _patch_ls_remote(monkeypatch, {
+        ("actions/checkout", "v6"): "a" * 40,
+    })
+    hash_pin_workflows(tmp_path, write=True)
+    text = yml.read_text()
+    # Indent (2 spaces + tab) preserved.
+    assert "  \t- uses:" in text, f"tab indent lost: {text!r}"
+
+
+def test_pinned_yaml_stays_parseable_round_trip(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """A workflow that parsed before hash-pinning must still parse
+    after. End-to-end gate against the regex bug class — any
+    future change to the rewrite logic that breaks YAML structure
+    fails this test."""
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    yml = workflows / "ci.yml"
+    yml.write_text(
+        "name: Test\n"
+        "on: [push]\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Checkout\n"
+        "        uses: actions/checkout@v6\n"
+        "      - name: Setup\n"
+        "        uses: actions/setup-python@v6\n"
+        "        with:\n"
+        "          python-version: '3.12'\n"
+        "      - name: Run tests\n"
+        "        run: pytest\n",
+        encoding="utf-8",
+    )
+    _patch_ls_remote(monkeypatch, {
+        ("actions/checkout", "v6"): "0" * 40,
+        ("actions/setup-python", "v6"): "1" * 40,
+    })
+    hash_pin_workflows(tmp_path, write=True)
+    import yaml
+    parsed = yaml.safe_load(yml.read_text())
+    # Structure intact.
+    assert parsed["name"] == "Test"
+    assert parsed["jobs"]["build"]["runs-on"] == "ubuntu-latest"
+    steps = parsed["jobs"]["build"]["steps"]
+    assert len(steps) == 3
+    assert steps[0]["name"] == "Checkout"
+    assert steps[1]["with"]["python-version"] == "3.12"
+    assert steps[2]["run"] == "pytest"

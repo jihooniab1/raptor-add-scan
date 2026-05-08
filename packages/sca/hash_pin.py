@@ -33,13 +33,25 @@ logger = logging.getLogger(__name__)
 # ``uses: org/action@<ref>`` — captures the ref so we can decide whether
 # to resolve it. Sub-action paths (``org/action/sub@<ref>``) are
 # supported.
+#
+# ``prefix`` captures the FULL line lead so the rewrite preserves
+# YAML indentation:
+#   * ``[ \t]*`` — every leading space / tab on the line
+#   * ``(?:-[ \t]+)?`` — optional ``- `` for list-item-on-its-own-line
+#     form (``- uses: ...`` vs ``        uses: ...``)
+#   * ``uses:[ \t]*`` — the key + trailing whitespace
+#
+# Pre-fix the prefix only captured ``(?:^|\s)uses:\s*`` which loses
+# all but one char of leading indent; the rewrite replaced the
+# whole line with just that one char + the new content, breaking
+# YAML by collapsing 8-space indentation to 1.
 _USES_RE = re.compile(
-    r"""(?P<prefix>(?:^|\s)uses:\s*)
+    r"""^(?P<prefix>[ \t]*(?:-[ \t]+)?uses:[ \t]*)
         (?P<owner>[A-Za-z0-9_.\-]+)/
         (?P<repo>[A-Za-z0-9_.\-]+)
         (?P<sub>(?:/[A-Za-z0-9_./\-]+)?)
         @(?P<ref>[A-Za-z0-9_./\-]+)
-        (?P<trailing>\s*(?:\#.*)?)?$
+        (?P<trailing>[ \t]*(?:\#.*)?)?$
     """,
     re.MULTILINE | re.VERBOSE,
 )
