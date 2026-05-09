@@ -14,6 +14,8 @@ from packages.sca.calibration.build import (
     _build_kev,
     _build_epss,
     _build_metasploit,
+    _build_osv_evidence,
+    _is_exploit_host_url,
     _msf_ref_to_cve,
     _write_if_changed,
     build_corpus,
@@ -415,3 +417,146 @@ def test_write_if_changed_skips_unchanged(tmp_path: Path) -> None:
         tmp_path / "x.json", payload2, source="x", record_count=1,
     )
     assert r2.written is False
+
+
+# ---------------------------------------------------------------------------
+# OSV EVIDENCE-host signal builder
+# ---------------------------------------------------------------------------
+
+
+def test_is_exploit_host_url_allowlist():
+    # Exploit-publication hosts → True
+    for url in [
+        "https://exploit-db.com/exploits/41614",
+        "https://www.exploit-db.com/exploits/41614",
+        "http://packetstormsecurity.com/files/165270/Apache.html",
+        "https://0day.today/exploit/12345",
+        "https://huntr.dev/bounties/abc-123",
+        "https://gist.github.com/foo/abc123",
+        "https://seclists.org/fulldisclosure/2022/Dec/2",
+    ]:
+        assert _is_exploit_host_url(url), url
+    # Advisory / blog / vendor hosts → False (knowledge ≠ exploit)
+    for url in [
+        "https://snyk.io/vuln/SNYK-PHP-FOO",
+        "https://hackerone.com/reports/12345",
+        "https://nvd.nist.gov/vuln/detail/CVE-2021-44228",
+        "https://github.com/torvalds/linux",
+        "https://lists.apache.org/foo",
+        "https://blog.example.com/cve-2024-X",
+        "",
+        None,
+    ]:
+        assert not _is_exploit_host_url(url), url
+
+
+def test_build_osv_evidence_extracts_only_exploit_host_urls(
+    tmp_path: Path,
+) -> None:
+    """Builder should walk corpus CVEs, query OSV, and accept ONLY
+    refs whose host is in the exploit-publication allowlist."""
+    samples_dir = tmp_path / "project_samples" / "PyPI"
+    samples_dir.mkdir(parents=True)
+    (samples_dir / "x.json").write_text(json.dumps({
+        "_source": {"name": "x"},
+        "findings": [
+            {"advisory": {"aliases": ["CVE-2024-1"]}},
+            {"advisory": {"cve_id": "CVE-2024-2"}},
+            {"advisory": {"cves": ["CVE-2024-3"]}},
+        ],
+    }), encoding="utf-8")
+
+    osv_responses = {
+        "https://api.osv.dev/v1/vulns/CVE-2024-1": {
+            "id": "GHSA-x", "references": [
+                {"type": "EVIDENCE",
+                 "url": "https://exploit-db.com/exploits/99"},
+                {"type": "EVIDENCE",
+                 "url": "https://snyk.io/vuln/SNYK-X"},
+                {"type": "ADVISORY", "url": "https://nvd/x"},
+            ],
+        },
+        "https://api.osv.dev/v1/vulns/CVE-2024-2": {
+            # Has EVIDENCE refs but NONE on the exploit-host allowlist.
+            "id": "GHSA-y", "references": [
+                {"type": "EVIDENCE",
+                 "url": "https://hackerone.com/reports/123"},
+                {"type": "EVIDENCE",
+                 "url": "https://twitter.com/foo/status/x"},
+            ],
+        },
+        "https://api.osv.dev/v1/vulns/CVE-2024-3": {
+            # No EVIDENCE refs at all — only WEB.
+            "id": "GHSA-z", "references": [
+                {"type": "WEB", "url": "https://example.com"},
+            ],
+        },
+    }
+    http = _StubHttp(osv_responses)
+    result = _build_osv_evidence(tmp_path, http)
+    assert result.source == "osv_evidence"
+    data = json.loads(
+        (tmp_path / "osv_evidence_signals.json").read_text(),
+    )
+    sigs = data["signals"]
+    # Only CVE-2024-1 makes the cut: it has an exploit-host URL.
+    assert list(sigs.keys()) == ["CVE-2024-1"]
+    assert sigs["CVE-2024-1"]["evidence_urls"] == [
+        "https://exploit-db.com/exploits/99",
+    ]
+    # Diagnostics in _source: verify all 3 CVEs were queried, 2 had
+    # ANY evidence, only 1 had an exploit-host URL.
+    src = data["_source"]
+    assert src["cves_in_corpus"] == 3
+    assert src["cves_queried"] == 3
+    assert src["cves_with_any_evidence_ref"] == 2
+    assert src["cves_with_exploit_host_url"] == 1
+
+
+def test_build_osv_evidence_handles_missing_corpus_dir(
+    tmp_path: Path,
+) -> None:
+    """No project_samples/ → empty signal file, no errors."""
+    http = _StubHttp({})  # no calls expected
+    result = _build_osv_evidence(tmp_path, http)
+    assert result.source == "osv_evidence"
+    assert result.written is True
+    data = json.loads(
+        (tmp_path / "osv_evidence_signals.json").read_text(),
+    )
+    assert data["signals"] == {}
+    assert data["_source"]["cves_in_corpus"] == 0
+
+
+def test_build_osv_evidence_swallows_per_cve_404s(
+    tmp_path: Path,
+) -> None:
+    """Per-CVE OSV failures (404 / timeout) shouldn't abort the
+    build — those CVEs simply don't get an EVIDENCE signal."""
+    samples_dir = tmp_path / "project_samples" / "Cargo"
+    samples_dir.mkdir(parents=True)
+    (samples_dir / "x.json").write_text(json.dumps({
+        "_source": {"name": "x"},
+        "findings": [
+            {"advisory": {"aliases": ["CVE-2024-A", "CVE-2024-B"]}},
+        ],
+    }), encoding="utf-8")
+
+    class _FailingHttp:
+        def get_json(self, url):
+            if url.endswith("CVE-2024-A"):
+                raise RuntimeError("404")
+            return {
+                "id": "GHSA-b", "references": [
+                    {"type": "EVIDENCE",
+                     "url": "https://exploit-db.com/exploits/x"},
+                ],
+            }
+    result = _build_osv_evidence(tmp_path, _FailingHttp())
+    data = json.loads(
+        (tmp_path / "osv_evidence_signals.json").read_text(),
+    )
+    # CVE-A swallowed; CVE-B got its signal.
+    assert "CVE-2024-A" not in data["signals"]
+    assert "CVE-2024-B" in data["signals"]
+    assert result.record_count == 1

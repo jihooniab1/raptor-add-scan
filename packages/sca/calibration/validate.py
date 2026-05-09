@@ -178,7 +178,8 @@ def _load_ground_truth(corpus_dir: Path) -> Set[str]:
     """
     exploited: Set[str] = set()
     for fname in ("kev_signals.json", "exploitdb_signals.json",
-                   "metasploit_signals.json", "github_poc_signals.json"):
+                   "metasploit_signals.json", "github_poc_signals.json",
+                   "osv_evidence_signals.json"):
         path = corpus_dir / fname
         if not path.is_file():
             continue

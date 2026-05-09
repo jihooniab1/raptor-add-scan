@@ -70,6 +70,30 @@ attribution requirements for sources where the data license requires it.
   if they want; the corpus stores only the public observable that
   the URL exists.
 
+### `osv_evidence_signals.json` — OSV EVIDENCE references (filtered)
+
+- **License:** Derived signal — presence + public URL only. OSV's
+  data is CC-BY-4.0; we cite + don't redistribute its advisory
+  bodies. URLs in the signal are public observable facts. Linked
+  exploit content is **not** fetched or stored.
+- **Source:** OSV `/v1/vulns/{id}` for every CVE present in
+  `project_samples/` findings. We extract `references[]` entries
+  where `type == "EVIDENCE"`.
+- **Filter:** EVIDENCE refs whose host is in an explicit
+  exploit-publication allowlist (exploit-db, packetstormsecurity,
+  0day.today, huntr.dev, gist.github.com, seclists.org). Advisory-
+  only hosts (snyk.io, hackerone.com, vendor blogs, mailing lists)
+  are EXCLUDED — their presence indicates public knowledge of a
+  vulnerability, not public availability of an exploit. The first
+  unfiltered iteration of this signal collapsed Spearman ρ on the
+  corpus by labelling 553 findings as `exploited` based on
+  knowledge presence rather than exploit availability.
+- **Scope:** corpus-only. OSV exposes no CVE-listing endpoint, so
+  the queryable universe is bounded by what scans actually surface.
+- **What's stored:** `{cve_id: {has_osv_evidence: true, evidence_urls: ["https://exploit-db.com/...", ...]}}`.
+- **What's NEVER stored:** referenced exploit content. Operators
+  inspecting the URL can navigate manually.
+
 ### Tier 2 — future additions
 
 - **GitHub Advisory Database (GHSA) refs** — already covered indirectly

@@ -79,7 +79,8 @@ def build_corpus(
         http = default_client()
 
     if sources is None:
-        sources = ["kev", "epss", "exploitdb", "metasploit", "github_poc"]
+        sources = ["kev", "epss", "exploitdb", "metasploit",
+                   "github_poc", "osv_evidence"]
 
     results: List[BuildResult] = []
     for source in sources:
@@ -94,6 +95,8 @@ def build_corpus(
                 results.append(_build_metasploit(out_dir, http))
             elif source == "github_poc":
                 results.append(_build_github_poc(out_dir, http))
+            elif source == "osv_evidence":
+                results.append(_build_osv_evidence(out_dir, http))
             else:
                 results.append(BuildResult(
                     source=source, written=False,
@@ -482,6 +485,171 @@ def _build_epss(out_dir: Path, http: Any) -> BuildResult:
         out_dir / "epss_signals.json", output, source="epss",
         record_count=len(signals),
     )
+
+
+def _build_osv_evidence(out_dir: Path, http: Any) -> BuildResult:
+    """Walk OSV records for every CVE present in the
+    ``project_samples/`` corpus and emit a CVE-keyed signal of
+    ``EVIDENCE`` references that point to known exploit-hosting
+    domains.
+
+    OSV aggregates references from upstream advisory sources (GHSA,
+    CVE.org, NVD) and tags each by type. ``EVIDENCE`` is a broad
+    type — it marks URLs ranging from packetstormsecurity exploit
+    code to Snyk/Hackerone advisories to Twitter posts. The first
+    pass at this builder accepted every EVIDENCE ref; that nuked
+    Spearman ρ on the corpus by labelling 553 findings ``exploited``
+    based on advisory presence rather than exploit availability,
+    diluting the same definition KEV/EDB/MSF/PoC carry.
+
+    The fix: filter EVIDENCE URLs by host. Only count refs whose
+    host is in :data:`_OSV_EVIDENCE_EXPLOIT_HOSTS` — exploit
+    archives + bug-bounty PoC sites + the full-disclosure mailing
+    list. Advisory-only hosts (snyk.io, hackerone.com, nvd.nist.gov,
+    vendor blogs) are dropped because their presence indicates
+    public KNOWLEDGE, not public EXPLOIT.
+
+    For high-impact CVEs (Log4Shell, Struts2) this still surfaces
+    packetstormsecurity / exploit-db / GitHub gist links — a fifth
+    independent ground-truth source beyond KEV / EDB / MSF / GH-PoC,
+    with particular value for ecosystems where EDB/MSF/PoC coverage
+    is sparse (Rust / .NET / PHP).
+
+    **Scope:** corpus-only. OSV doesn't expose a CVE listing
+    endpoint, so the universe of queryable CVEs is bounded by what
+    our scans actually surface. Walking the existing 27k-entry
+    signal union would be 27k OSV calls (~45 min); walking the
+    corpus's surfaced CVEs is typically ~150-500 calls.
+
+    **Empty result is acceptable:** if no project_samples directory
+    exists yet (fresh checkout, pre-collect), record_count=0 and
+    the signal file emits an empty signals block — the validator
+    handles missing files gracefully.
+    """
+    OSV_BASE = "https://api.osv.dev/v1"
+    samples_dir = out_dir / "project_samples"
+
+    cve_set: set = set()
+    cves_with_any_evidence_ref = 0
+    cves_with_exploit_host_url = 0
+    if samples_dir.is_dir():
+        for sample_path in samples_dir.rglob("*.json"):
+            try:
+                data = json.loads(sample_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            for finding in data.get("findings", []):
+                if not isinstance(finding, dict):
+                    continue
+                advisory = finding.get("advisory") or {}
+                if not isinstance(advisory, dict):
+                    continue
+                for key in ("aliases", "cves"):
+                    for c in (advisory.get(key) or []):
+                        if isinstance(c, str) and c.startswith("CVE-"):
+                            cve_set.add(c)
+                cve = advisory.get("cve_id")
+                if isinstance(cve, str) and cve.startswith("CVE-"):
+                    cve_set.add(cve)
+
+    signals: Dict[str, Dict[str, Any]] = {}
+    queried = 0
+    for cve in sorted(cve_set):
+        try:
+            data = http.get_json(f"{OSV_BASE}/vulns/{cve}")
+        except Exception:                                   # noqa: BLE001
+            # Per-CVE failures (404, 5xx, timeout) shouldn't abort
+            # the whole build. Missing CVEs in OSV simply don't get
+            # an EVIDENCE signal.
+            continue
+        queried += 1
+        if not isinstance(data, dict):
+            continue
+        all_evidence_urls: List[str] = []
+        exploit_host_urls: List[str] = []
+        for ref in (data.get("references") or []):
+            if not isinstance(ref, dict):
+                continue
+            if ref.get("type") != "EVIDENCE":
+                continue
+            url = ref.get("url")
+            if not isinstance(url, str):
+                continue
+            all_evidence_urls.append(url)
+            if _is_exploit_host_url(url):
+                exploit_host_urls.append(url)
+        if all_evidence_urls:
+            cves_with_any_evidence_ref += 1
+        if exploit_host_urls:
+            cves_with_exploit_host_url += 1
+            signals[cve] = {
+                "has_osv_evidence": True,
+                "evidence_urls": sorted(set(exploit_host_urls)),
+            }
+    output = {
+        "_source": {
+            "name": "OSV EVIDENCE references (corpus-scoped)",
+            "url": f"{OSV_BASE}/vulns/{{id}}",
+            "license": (
+                "Derived signal: presence + URL only. Source URLs "
+                "are public observable facts; evidence content is "
+                "NOT fetched or stored."
+            ),
+            "fetched_at": _utcnow(),
+            "provenance": (
+                "Walks every CVE referenced in project_samples/ "
+                "findings, queries OSV /vulns/{id}, and extracts "
+                "references where type=='EVIDENCE'. Corpus-scoped "
+                "because OSV exposes no CVE-listing endpoint; the "
+                "universe is bounded by what our scans actually "
+                "surface."
+            ),
+            "cves_queried": queried,
+            "cves_in_corpus": len(cve_set),
+            "cves_with_any_evidence_ref": cves_with_any_evidence_ref,
+            "cves_with_exploit_host_url": cves_with_exploit_host_url,
+            "exploit_host_allowlist": sorted(_OSV_EVIDENCE_EXPLOIT_HOSTS),
+        },
+        "signals": dict(sorted(signals.items())),
+    }
+    return _write_if_changed(
+        out_dir / "osv_evidence_signals.json", output,
+        source="osv_evidence", record_count=len(signals),
+    )
+
+
+# Hosts where an EVIDENCE-tagged URL is an "exploit-publication"
+# signal — exploit archives, bug-bounty PoC sites, full-disclosure
+# mailing lists. Advisory-only hosts (snyk.io / hackerone.com /
+# vendor blogs) are deliberately excluded: their presence indicates
+# public knowledge of a vulnerability, not public availability of
+# an exploit. We already capture vulnerability-knowledge via OSV's
+# core advisory graph; this signal is specifically for "exploit
+# code is one click away".
+_OSV_EVIDENCE_EXPLOIT_HOSTS = frozenset({
+    "exploit-db.com",
+    "packetstormsecurity.com",
+    "packetstormsecurity.org",
+    "0day.today",
+    "huntr.dev",
+    "gist.github.com",
+    "seclists.org",
+})
+
+
+def _is_exploit_host_url(url: str) -> bool:
+    """True when the URL's host (case-insensitive, ``www.`` stripped)
+    is in the exploit-publication allowlist."""
+    if not isinstance(url, str) or not url:
+        return False
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+    except Exception:                                       # noqa: BLE001
+        return False
+    if host.startswith("www."):
+        host = host[4:]
+    return host in _OSV_EVIDENCE_EXPLOIT_HOSTS
 
 
 # ---------------------------------------------------------------------------
