@@ -37,6 +37,13 @@ class BundlerResolver:
     """``bundle lock`` (in a temp copy) wrapper."""
 
     ecosystem = "RubyGems"
+    # Note: ``.gemspec`` files also affect resolution but vary per
+    # project (no fixed name). The cache wrapper's manifest-list is
+    # literal filenames only, so .gemspec drift may not invalidate
+    # the cache — operators with .gemspec changes can flush by
+    # bumping the .gemspec content into Gemfile.lock or via the
+    # 24h TTL.
+    MANIFEST_FILES = ("Gemfile", "Gemfile.lock")
     proxy_hosts = (
         "rubygems.org",
         "index.rubygems.org",

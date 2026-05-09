@@ -473,7 +473,7 @@ def test_cross_ecosystem_parallel_runs_concurrently(tmp_path, monkeypatch):
     import time as _time
     from packages.sca.transitive import _run_cascades_parallel
 
-    def fake_try(eco, work_items):
+    def fake_try(eco, work_items, cache=None):
         _time.sleep(0.3)
         return [(pd, host, [], None) for pd, host in work_items]
 
@@ -501,7 +501,7 @@ def test_cross_ecosystem_one_crashes_others_proceed(tmp_path, monkeypatch):
     downstream can still emit a meaningful TransitiveStatus."""
     from packages.sca.transitive import _run_cascades_parallel
 
-    def fake_try(eco, work_items):
+    def fake_try(eco, work_items, cache=None):
         if eco == "PyPI":
             raise RuntimeError("PyPI batch blew up")
         return [(pd, host, [], None) for pd, host in work_items]

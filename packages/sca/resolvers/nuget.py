@@ -36,6 +36,12 @@ class NugetResolver:
     """``dotnet restore`` wrapper."""
 
     ecosystem = "NuGet"
+    # ``.csproj`` / ``.fsproj`` filenames vary per project and
+    # aren't a fixed glob — operators with project-file changes
+    # may need to wait out the 24h TTL or flush manually. The
+    # ``packages.lock.json`` lock IS a fixed name and dominates the
+    # resolution-input shape.
+    MANIFEST_FILES = ("packages.lock.json",)
     proxy_hosts = (
         "api.nuget.org",
         "nuget.org",

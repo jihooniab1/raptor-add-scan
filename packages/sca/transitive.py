@@ -188,7 +188,7 @@ def expand_missing_transitives(
     # sandbox session.
     cascade_results: Dict[Tuple[str, Path], Tuple[Optional[List[Dependency]], Optional[str]]] = {}
     if cascade_work and enable_resolver:
-        cascade_results = _run_cascades_parallel(cascade_work)
+        cascade_results = _run_cascades_parallel(cascade_work, cache=cache)
 
     # Second pass: emit transitives + statuses per (eco, project_dir).
     # ``by_eco_dir`` is the original work list; we look up cascade
@@ -261,6 +261,7 @@ def expand_missing_transitives(
 
 def _run_cascades_parallel(
     cascade_work: Dict[str, List[Tuple[Path, Path]]],
+    cache: Optional["JsonCache"] = None,
 ) -> Dict[Tuple[str, Path], Tuple[Optional[List[Dependency]], Optional[str]]]:
     """Dispatch one batched cascade per ecosystem in parallel.
 
@@ -286,7 +287,7 @@ def _run_cascades_parallel(
         thread_name_prefix="sca-cascade",
     ) as pool:
         futs = {
-            pool.submit(_try_cascade_batch, eco, items): eco
+            pool.submit(_try_cascade_batch, eco, items, cache): eco
             for eco, items in cascade_work.items()
         }
         for fut in futs:
@@ -314,6 +315,7 @@ def _run_cascades_parallel(
 def _try_cascade_batch(
     ecosystem: str,
     work_items: List[Tuple[Path, Path]],
+    cache: Optional["JsonCache"] = None,
 ) -> List[Tuple[Path, Path, Optional[List[Dependency]], Optional[str]]]:
     """Run cascade resolution for every (project_dir, host_manifest)
     in a single ecosystem. Uses ``dry_run_batch`` so resolvers that
@@ -324,7 +326,8 @@ def _try_cascade_batch(
     aligned with ``work_items``.
     """
     _ensure_lockfile_parsers_loaded()
-    from .resolvers import dry_run_batch as _dry_run_batch, get_resolver
+    from .resolvers import get_resolver
+    from .resolvers._cache import cached_dry_run_batch
 
     out: List[Tuple[Path, Path, Optional[List[Dependency]], Optional[str]]] = []
     if not work_items:
@@ -363,9 +366,18 @@ def _try_cascade_batch(
     # paths, single item, no-batch resolver), it falls back to
     # sequential per-dir ``dry_run`` automatically.
     common_root = _common_ancestor(project_dirs)
-    results = _dry_run_batch(
-        resolver, project_dirs, common_root=common_root,
-    )
+    if cache is not None:
+        results = cached_dry_run_batch(
+            resolver, project_dirs, cache=cache,
+            common_root=common_root,
+        )
+    else:
+        # No cache wired — fall through to the direct subprocess
+        # path. Tests + early-bootstrap callers hit this branch.
+        from .resolvers import dry_run_batch as _dry_run_batch
+        results = _dry_run_batch(
+            resolver, project_dirs, common_root=common_root,
+        )
     for (pd, host), result in zip(work_items, results):
         if not result.success:
             out.append((
@@ -456,6 +468,7 @@ def _common_ancestor(paths: Sequence[Path]) -> Path:
 
 def _try_cascade(
     ecosystem: str, project_dir: Path, host_manifest_path: Path,
+    cache: Optional["JsonCache"] = None,
 ) -> Tuple[Optional[List[Dependency]], Optional[str]]:
     """Run the matching cascade resolver. Return
     ``(deps, None)`` on success and ``(None, reason)`` on any failure
@@ -477,7 +490,11 @@ def _try_cascade(
             f"{ecosystem} toolchain not installed (cascade resolver "
             f"requires it for transitive resolution)"
         )
-    result = resolver.dry_run(project_dir)
+    if cache is not None:
+        from .resolvers._cache import cached_dry_run
+        result = cached_dry_run(resolver, project_dir, cache=cache)
+    else:
+        result = resolver.dry_run(project_dir)
     if not result.success:
         return None, (
             f"{ecosystem} resolver failed: "

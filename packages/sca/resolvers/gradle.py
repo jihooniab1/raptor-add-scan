@@ -41,6 +41,11 @@ class GradleResolver:
     """``gradle dependencies`` wrapper."""
 
     ecosystem = "Maven"
+    MANIFEST_FILES = (
+        "build.gradle", "settings.gradle",
+        "build.gradle.kts", "settings.gradle.kts",
+        "gradle.lockfile",
+    )
     # The Maven Central mirror + Gradle's own plugin portal. Some
     # projects pin to JFrog or a corporate mirror — those will
     # surface as proxy refusals (the right failure mode) rather

@@ -36,6 +36,7 @@ class MavenResolver:
     """``mvn dependency:resolve`` wrapper."""
 
     ecosystem = "Maven"
+    MANIFEST_FILES = ("pom.xml",)
     # Maven Central (the canonical repo) plus its modern alias.
     # Projects using corporate mirrors will surface as proxy
     # refusals — the right signal that the operator's repo

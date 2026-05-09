@@ -27,6 +27,9 @@ class NpmResolver:
     """``npm install --dry-run`` wrapper."""
 
     ecosystem = "npm"
+    # Files the resolver-cache wrapper hashes to key memoisation.
+    # See ``_cache.py``. Order doesn't matter — hash sorts by path.
+    MANIFEST_FILES = ("package.json", "package-lock.json")
     # npm's only outbound destination during metadata-only installs.
     # If a project pins a custom registry via .npmrc, the cascade
     # validation will fail at the proxy allowlist — that's the

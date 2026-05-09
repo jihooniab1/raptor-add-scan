@@ -35,6 +35,7 @@ class YarnResolver:
     """``yarn install`` wrapper (classic + Berry)."""
 
     ecosystem = "npm"
+    MANIFEST_FILES = ("package.json", "yarn.lock")
     # Yarn's default registry. Berry can switch via .yarnrc.yml; if a
     # project does that the cascade will surface as a proxy refusal,
     # which is the right failure mode (reveals an unallowed source).

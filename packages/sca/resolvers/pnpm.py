@@ -27,6 +27,7 @@ class PnpmResolver:
     """``pnpm install --lockfile-only`` wrapper."""
 
     ecosystem = "npm"
+    MANIFEST_FILES = ("package.json", "pnpm-lock.yaml")
     proxy_hosts = ("registry.npmjs.org",)
 
     def is_available(self) -> bool:

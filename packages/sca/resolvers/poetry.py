@@ -27,6 +27,7 @@ class PoetryResolver:
     """``poetry lock`` wrapper."""
 
     ecosystem = "PyPI"
+    MANIFEST_FILES = ("pyproject.toml", "poetry.lock")
     proxy_hosts = ("pypi.org", "files.pythonhosted.org")
 
     def is_available(self) -> bool:

@@ -38,6 +38,7 @@ class CargoResolver:
     """``cargo update`` (in a temp copy) wrapper."""
 
     ecosystem = "crates.io"
+    MANIFEST_FILES = ("Cargo.toml", "Cargo.lock")
     # crates.io HTTP API + sparse index + the static CDN that serves
     # ``.crate`` archives. ``index.crates.io`` is the sparse-protocol
     # endpoint used by Cargo 1.74+ (the default since 1.74).

@@ -30,6 +30,7 @@ class ComposerResolver:
     """``composer update --lock --no-install`` wrapper."""
 
     ecosystem = "Packagist"
+    MANIFEST_FILES = ("composer.json", "composer.lock")
     proxy_hosts = (
         "repo.packagist.org",
         "packagist.org",

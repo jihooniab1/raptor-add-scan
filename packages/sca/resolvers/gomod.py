@@ -32,6 +32,7 @@ class GoResolver:
     """``go mod tidy`` (in a temp copy) wrapper."""
 
     ecosystem = "Go"
+    MANIFEST_FILES = ("go.mod", "go.sum")
     # The default Go module proxy + the checksum DB. A target with
     # ``GOPROXY=direct`` or a private proxy will surface as a proxy
     # refusal; the right fix is to add the host explicitly per

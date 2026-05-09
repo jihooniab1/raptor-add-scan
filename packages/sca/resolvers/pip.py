@@ -73,6 +73,15 @@ class PipResolver:
     SUPPORTS_BATCH = True
 
     ecosystem = "PyPI"
+    # Files the resolver-cache wrapper hashes to key memoisation.
+    # See ``_cache.py``. ``constraints.txt`` would also affect
+    # resolution but pip-compile picks it up only via ``-c`` on the
+    # command line, not as a discovered manifest, so projects that
+    # use it will need to invalidate manually if the cache miss-
+    # fires (rare).
+    MANIFEST_FILES = (
+        "requirements.txt", "requirements.in", "pyproject.toml",
+    )
     # pypi.org for JSON metadata, files.pythonhosted.org for the
     # actual wheels pip-compile / pip download for resolution.
     # Some org pip configs use a private mirror; the sandbox will
