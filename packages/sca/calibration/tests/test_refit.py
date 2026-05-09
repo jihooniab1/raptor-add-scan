@@ -483,3 +483,43 @@ def test_ndcg_perfect_when_all_top_n_are_exploited():
     rescored = [(100.0 - i, 1) for i in range(20)] + \
                 [(0.0 - i, 0) for i in range(80)]   # 20 exploited, 80 clean
     assert _ndcg_at_n(rescored, n=20) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# ecosystem_filter — per-eco refit substrate
+# ---------------------------------------------------------------------------
+
+
+def test_ecosystem_filter_drops_other_ecos(tmp_path: Path):
+    """grid_search_refit's ``ecosystem_filter`` arg restricts the
+    sample set to one ecosystem before fitting. Used by operators
+    to compare per-eco optimal constants without introducing
+    per-eco constants in code."""
+    _write_signals(tmp_path, ["CVE-2025-1"])
+    _write_sample(tmp_path, "PyPI", "p", [
+        _make_finding(cve="CVE-2025-1", score=80, ecosystem="PyPI"),
+    ])
+    _write_sample(tmp_path, "npm", "n", [
+        _make_finding(cve="CVE-2025-99", score=20, ecosystem="npm"),
+    ])
+    # Without filter — sees both.
+    report_all = grid_search_refit(
+        tmp_path, max_delta=0.10, min_samples=1,
+    )
+    assert report_all.sample_count == 2
+    assert "ecosystem_filter" not in " ".join(report_all.notes)
+
+    # With filter — only PyPI.
+    report_py = grid_search_refit(
+        tmp_path, max_delta=0.10, min_samples=1,
+        ecosystem_filter="PyPI",
+    )
+    assert report_py.sample_count == 1
+    assert any("ecosystem_filter='PyPI'" in n for n in report_py.notes)
+
+    # Filter for an ecosystem with no samples — sample_count=0.
+    report_none = grid_search_refit(
+        tmp_path, max_delta=0.10, min_samples=1,
+        ecosystem_filter="Cargo",
+    )
+    assert report_none.sample_count == 0

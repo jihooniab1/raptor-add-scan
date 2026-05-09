@@ -81,6 +81,16 @@ def main() -> int:
         help="when refit status=proposed, write the new values "
              "back to packages/sca/risk.py. Default: report-only.",
     )
+    parser.add_argument(
+        "--ecosystem", default=None,
+        help="filter corpus to one ecosystem before fitting "
+             "(e.g. 'Maven', 'npm'). Useful for comparing per-"
+             "ecosystem optimal constants without introducing "
+             "per-eco constants in code — operator inspects the "
+             "diverged report to decide. Min sample size still "
+             "applies; ecosystems with <100 findings will be "
+             "rejected by the cold-start gate.",
+    )
     args = parser.parse_args()
 
     corpus_dir = (
@@ -111,6 +121,7 @@ def main() -> int:
             else DEFAULT_IMPROVEMENT_THRESHOLD
         ),
         out_path=args.out,
+        ecosystem_filter=args.ecosystem,
     )
 
     print(

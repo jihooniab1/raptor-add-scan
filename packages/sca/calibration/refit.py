@@ -171,6 +171,7 @@ def grid_search_refit(
     improvement_threshold: float = DEFAULT_IMPROVEMENT_THRESHOLD,
     min_samples: int = MIN_SAMPLES_FOR_REFIT,
     out_path: Optional[Path] = None,
+    ecosystem_filter: Optional[str] = None,
 ) -> RefitReport:
     """Run the per-constant grid search and emit a refit report.
 
@@ -179,11 +180,28 @@ def grid_search_refit(
 
     Writes the report to ``corpus_dir/refit/<date>.json`` (or
     ``out_path`` when explicitly supplied).
+
+    ``ecosystem_filter``: when set, drops findings outside the
+    named ecosystem before fitting. Useful for "what would
+    Maven-only optimal constants look like" investigations
+    without changing the cross-ecosystem code path. The same
+    ``min_samples`` cold-start gate applies to the filtered
+    set — ecosystems with too few findings get rejected.
     """
     snapshot = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     notes: List[str] = []
 
     samples = _load_findings_with_labels(corpus_dir)
+    if ecosystem_filter is not None:
+        before = len(samples)
+        samples = [
+            (f, l) for f, l in samples
+            if (f.get("ecosystem") or "?") == ecosystem_filter
+        ]
+        notes.append(
+            f"ecosystem_filter={ecosystem_filter!r}: "
+            f"{before} → {len(samples)} samples"
+        )
     if not samples:
         return _emit_report(
             RefitReport(
