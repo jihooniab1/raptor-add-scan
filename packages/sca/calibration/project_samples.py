@@ -183,6 +183,26 @@ PROJECT_SAMPLES: List[ProjectSample] = [
         repo_url="https://github.com/spring-projects/spring-boot.git",
         git_ref="v1.5.10.RELEASE", license_spdx="Apache-2.0",
     ),
+    # ---- App-shaped PyPI sample ---------------------------------------
+    # Library repos (django/requests/flask at any pin) carry narrow
+    # dep trees — django pulls just Python stdlib + a few utilities,
+    # so scanning the django repo surfaces ~3 finding rows. PyPI
+    # signal density stays at 0% because there isn't a tree to walk.
+    #
+    # Saleor 2.10.0 (March 2020) is a Django + GraphQL e-commerce
+    # platform with a deep dep tree declared in ``pyproject.toml``
+    # (Poetry) — Django, graphene-django, celery, jinja2, pillow,
+    # cryptography, and dozens more transitive deps with accrued
+    # KEV / EDB / MSF / PoC signals. The pyproject.toml format is
+    # critical: Airflow 1.10 (the first candidate tried) declared
+    # its deps in ``setup.py``, which SCA's parser doesn't read,
+    # so its 64 findings all came from its embedded ``www/``
+    # package.json (npm) and didn't move PyPI signal density.
+    ProjectSample(
+        name="saleor-2.10", ecosystem="PyPI",
+        repo_url="https://github.com/saleor/saleor.git",
+        git_ref="2.10.0", license_spdx="BSD-3-Clause",
+    ),
 ]
 
 
