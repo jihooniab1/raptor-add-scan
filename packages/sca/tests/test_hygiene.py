@@ -138,6 +138,36 @@ def test_unpinned_for_wildcard(tmp_path: Path) -> None:
     assert any(f.kind == "unpinned_dependency" for f in findings)
 
 
+def test_maven_version_none_exempt_from_unpinned(tmp_path: Path) -> None:
+    """Maven child poms intentionally omit ``<version>`` when the
+    parent POM's ``<dependencyManagement>`` does the pinning.
+    Pre-fix this detector flagged 1468 such entries at medium
+    severity on a single Spring Boot project — a 100%-false-
+    positive cascade. The exemption skips Maven ``version=None``
+    so the genuine Maven unpin-via-parent idiom doesn't surface
+    as hygiene noise."""
+    pom = tmp_path / "pom.xml"
+    deps = [_dep(
+        "org.springframework.boot:spring-boot-actuator",
+        version=None, path=pom, ecosystem="Maven",
+        pin_style=PinStyle.UNKNOWN,
+    )]
+    findings = evaluate([], deps)
+    assert not any(
+        f.kind == "unpinned_dependency" for f in findings
+    ), "Maven version=None must be exempt — parent POM is pinning it"
+
+
+def test_npm_version_none_still_flagged(tmp_path: Path) -> None:
+    """The Maven exemption is ecosystem-specific. npm / PyPI /
+    etc. with version=None should still surface as unpinned."""
+    pkg = tmp_path / "package.json"
+    deps = [_dep("lodash", version=None, path=pkg, ecosystem="npm",
+                  pin_style=PinStyle.UNKNOWN)]
+    findings = evaluate([], deps)
+    assert any(f.kind == "unpinned_dependency" for f in findings)
+
+
 def test_loose_pin_for_caret(tmp_path: Path) -> None:
     pkg = tmp_path / "package.json"
     deps = [_dep("lodash", path=pkg, pin_style=PinStyle.CARET)]

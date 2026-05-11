@@ -37,6 +37,24 @@ _SHA_RE = re.compile(r"^[a-f0-9]{40}$")
 _TAG_LIKE_RE = re.compile(
     r"^(?:v?\d+(?:\.\d+)*(?:[-+][\w.]+)?|release-?\d|\d{8})$"
 )
+# Go module pseudo-versions encode a commit SHA prefix — fully
+# reproducible despite looking branch-shaped. Three canonical
+# forms (Go ref: https://go.dev/ref/mod#pseudo-versions):
+#
+#   * ``v0.0.0-yyyymmddhhmmss-{12hex}``      (no semver tag exists)
+#   * ``vX.Y.Z-0.yyyymmddhhmmss-{12hex}``    (release tag at base)
+#   * ``vX.Y.Z-pre.0.yyyymmddhhmmss-{12hex}`` (pre-release tag at base)
+#
+# The trailing 12-char hex is the commit SHA prefix; go.sum carries
+# the full hash for verification. Treating these as
+# ``branch_or_other`` produced 406 spurious medium-severity findings
+# on Helm-3.5 alone — every Go dep pinned via go.mod's standard
+# untagged-commit shape.
+_GO_PSEUDO_RE = re.compile(
+    r"^v\d+\.\d+\.\d+"
+    r"(?:-(?:pre\.)?0\.|-)"
+    r"\d{14}-[0-9a-f]{12}$"
+)
 
 
 @dataclass(frozen=True)
@@ -93,6 +111,10 @@ def scan_deps(deps: Iterable[Dependency]) -> List[GitDriftFinding]:
 
 def _classify_ref(ref: str) -> str:
     if _SHA_RE.match(ref.lower()):
+        return "sha"
+    if _GO_PSEUDO_RE.match(ref):
+        # Pseudo-versions are SHA-equivalent for drift purposes —
+        # immutable, reproducible, verified by go.sum.
         return "sha"
     if _TAG_LIKE_RE.match(ref):
         return "tag"

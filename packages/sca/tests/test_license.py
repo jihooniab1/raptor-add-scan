@@ -45,6 +45,59 @@ def _dep(
 # ---------------------------------------------------------------------------
 
 
+def test_non_spdx_ecosystems_skipped() -> None:
+    """GitHub Actions / Debian / OCI / Inline deps don't carry
+    package-level SPDX metadata. Pre-fix the evaluator emitted
+    ``license_unknown`` info findings for every such dep — 295 on
+    one Cargo project (mostly GHA actions + Debian apt installs).
+    These aren't license policy issues; they're metadata gaps.
+    Skip the whole ecosystem rather than flooding the report."""
+    deps = [
+        _dep(ecosystem="GitHub Actions", license=None),
+        _dep(ecosystem="Debian", license=None),
+        _dep(ecosystem="OCI", license=None),
+        _dep(ecosystem="Inline", license=None),
+    ]
+    # Use a strict policy to prove the skip path takes effect even
+    # when default=deny would otherwise fire on unknown.
+    policy = LicensePolicy(allow={"MIT"}, default="deny",
+                            on_unknown="deny")
+    findings = evaluate(deps, policy)
+    assert findings == [], (
+        "non-SPDX ecosystems must be skipped; got "
+        f"{[(f.dependency.ecosystem, f.kind) for f in findings]}"
+    )
+
+
+def test_spdx_ecosystems_still_evaluated() -> None:
+    """The skip list is allowlist-shaped — PyPI / npm / Maven /
+    Cargo / etc. must still flow through ``evaluate``."""
+    deps = [
+        _dep(ecosystem="PyPI", license=None),
+        _dep(ecosystem="npm", license=None),
+        _dep(ecosystem="Maven", license=None),
+        _dep(ecosystem="Cargo", license=None),
+    ]
+    policy = LicensePolicy(allow={"MIT"}, default="warn",
+                            on_unknown="warn")
+    findings = evaluate(deps, policy)
+    assert len(findings) == 4
+    assert all(f.kind == "license_unknown" for f in findings)
+
+
+def test_go_currently_skipped_pending_enrichment() -> None:
+    """Go modules don't have a centralized SPDX feed; until an
+    enrich_go() implementation ships, treat Go like the other
+    non-SPDX ecosystems and skip license evaluation. Pre-fix,
+    Go's presence in the allowlist produced 977 ``license_unknown``
+    info findings on Helm-3.5 (every Go module in the dep graph)."""
+    deps = [_dep(ecosystem="Go", license=None)]
+    policy = LicensePolicy(allow=set(), default="deny",
+                            on_unknown="deny")
+    findings = evaluate(deps, policy)
+    assert findings == []
+
+
 def test_allowed_license_emits_no_finding():
     deps = [_dep(license="MIT")]
     policy = LicensePolicy(allow={"MIT"}, default="deny")

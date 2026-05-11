@@ -168,10 +168,27 @@ def check_lockfile_drift(
 
 
 def check_unpinned(deps: List[Dependency]) -> List[HygieneFinding]:
-    """Manifest entries with no version constraint."""
+    """Manifest entries with no version constraint.
+
+    Maven ``version is None`` is exempt: the standard Maven idiom
+    is to let a parent POM's ``<dependencyManagement>`` block do
+    the pinning, so child poms intentionally omit ``<version>``.
+    Spring Boot / Quarkus / micronaut-parent / etc. all rely on
+    this. Pre-fix this detector flagged 1468 such entries at
+    medium severity on a Spring Boot 1.5 project — a 100%-false-
+    positive cascade that drowned the actual findings.
+
+    A genuinely-unpinned Maven entry (no version, no parent
+    dependencyManagement) is also exempt here because Maven would
+    fail the build before SCA ever ran — we're not the right
+    layer to catch a malformed pom.xml.
+    """
     out: List[HygieneFinding] = []
     for d in deps:
         if d.is_lockfile:
+            continue
+        # Maven exception: see docstring.
+        if d.ecosystem == "Maven" and d.version is None:
             continue
         if d.pin_style in _UNPINNED or d.version is None:
             out.append(_finding(

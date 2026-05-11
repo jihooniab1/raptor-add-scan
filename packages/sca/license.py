@@ -184,6 +184,34 @@ def _as_action(v: Any, *, default: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: Ecosystems for which SPDX license metadata is fetchable / present
+#: in manifests. Deps from ecosystems NOT in this set are skipped by
+#: ``evaluate`` — pre-fix, GitHub Actions / Debian / OCI / Inline
+#: deps generated ``license_unknown`` info findings for every dep
+#: (295 on a Cargo project; same on every Helm scan). They aren't
+#: license policy issues — they're metadata gaps for ecosystems
+#: that don't ship SPDX at the package level.
+#:
+#: Adding an ecosystem here requires the enrichment path
+#: (``enrich_licenses``) to fetch SPDX for it; otherwise every dep
+#: from the new ecosystem floods as ``license_unknown``.
+_SPDX_SUPPORTED_ECOSYSTEMS: Set[str] = {
+    "PyPI",
+    "npm",
+    "Maven",
+    "Cargo",
+    "RubyGems",
+    "NuGet",
+    "Packagist",
+    # Go intentionally NOT included: Go modules don't have a
+    # centralized SPDX feed (pkg.go.dev surfaces LICENSE files
+    # informally but there's no programmatic API). Listing Go
+    # here without an enrichment path produced 977 ``license_
+    # unknown`` info findings on Helm-3.5. Re-add when an
+    # enrich_go() implementation ships.
+}
+
+
 def evaluate(
     deps: List[Dependency],
     policy: LicensePolicy,
@@ -193,10 +221,16 @@ def evaluate(
     Dedups by (ecosystem, name, version) — no point reporting the
     same dep twice when it appears in multiple manifests; the dep
     keys are stable across appearances.
+
+    Ecosystems lacking package-level SPDX metadata (GitHub Actions,
+    Debian, OCI, Inline) are skipped entirely — see
+    :data:`_SPDX_SUPPORTED_ECOSYSTEMS` for the allowlist.
     """
     seen: Set[str] = set()
     out: List[LicenseFinding] = []
     for d in deps:
+        if d.ecosystem not in _SPDX_SUPPORTED_ECOSYSTEMS:
+            continue
         key = d.key()
         if key in seen:
             continue
