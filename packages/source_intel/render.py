@@ -35,6 +35,7 @@ from packages.source_intel.analyze import (
     KIND_RETURNS_NONNULL,
     KIND_WUR,
     AbortEvidence,
+    AllocationEvidence,
     AttributeEvidence,
     SourceIntelResult,
 )
@@ -120,6 +121,19 @@ def derive_evidence_strings(
     for ab in aborts:
         lines.append(_render_abort_line(ab, style))
 
+    # Allocation evidence (axis 3). Filter to the finding's function
+    # when supplied. Phase 6a: only the field-assignment shape lands;
+    # later shapes are added as axis-3-expansion ships.
+    allocations = list(result.allocations)
+    if finding_function:
+        allocations = [
+            ae for ae in allocations
+            if ae.enclosing_function == finding_function
+            or ae.enclosing_function is None
+        ]
+    for ae in allocations:
+        lines.append(_render_allocation_line(ae, style))
+
     # When source_intel ran but found nothing relevant — emit an
     # explicit "no signal" line so the consumer prompt template
     # carries the absence acknowledgement.
@@ -131,6 +145,41 @@ def derive_evidence_strings(
         )
 
     return _truncate(lines, max_lines)
+
+
+def _render_allocation_line(ae: AllocationEvidence, style: str) -> str:
+    """Render one unchecked-allocation observation."""
+    fn_text = (
+        f"function `{ae.enclosing_function}`"
+        if ae.enclosing_function
+        else f"in {ae.location[0]} near line {ae.location[1]}"
+    )
+    field_text = (
+        f"field `->{ae.target_field}`"
+        if ae.target_field
+        else "the assigned location"
+    )
+
+    if style == "stage_d":
+        prefix = "Allocator-result not checked"
+    elif style == "exploit_plan":
+        prefix = "Primitive — unchecked allocator result"
+    else:
+        prefix = "Variant hint — unchecked alloc shape"
+
+    caveat = ""
+    if ae.conditional_on:
+        caveat = (
+            f" (CONDITIONAL: gated by `#if* {ae.conditional_on}` — "
+            f"downweight unless the actual build enables this.)"
+        )
+
+    return (
+        f"{prefix}: `{ae.allocator}` at {ae.location[0]}:{ae.location[1]} "
+        f"{fn_text} stores into {field_text} with NO subsequent NULL "
+        f"check on that location. Allocation failure → NULL stored → "
+        f"downstream deref crashes (CWE-476).{caveat}"
+    )
 
 
 def _render_abort_line(ab: AbortEvidence, style: str) -> str:

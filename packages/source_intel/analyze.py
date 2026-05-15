@@ -80,6 +80,33 @@ ALL_GRADES: Tuple[str, ...] = (
 
 
 @dataclass(frozen=True)
+class AllocationEvidence:
+    """A single observation of an allocator call site, optionally
+    flagged as unchecked. Phase 6a ships only the
+    ``unchecked_alloc_field`` shape (struct_p->fld = alloc(...) with
+    no subsequent NULL check); axis-3-expansion adds local-var,
+    nested-field, and aliased-deref shapes.
+
+    The cocci rule already filters for "no NULL check" via `when !=`
+    clauses, so every emitted observation IS unchecked. The
+    ``shape`` field carries the cocci sub-rule that fired —
+    consumers can dispatch on it for kind-specific rendering.
+
+    Stage D LLM consumer reads this evidence as "the allocator's
+    return wasn't checked before the function continued"; combined
+    with the finding's CWE-476 / null-deref claim, this is direct
+    support for an EXPLOITABLE verdict.
+    """
+
+    allocator: str  # which allocator (kstrdup, kmalloc, etc.)
+    location: Tuple[str, int]  # (file_path, line)
+    shape: str  # "field" | "local" | "nested_field" (Phase 6a: only "field")
+    target_field: Optional[str] = None  # struct field name for "field" shape
+    enclosing_function: Optional[str] = None
+    conditional_on: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class AbortEvidence:
     """A single observation of an abort-class call (BUG_ON, panic,
     abort, __builtin_trap, _Exit, assert).
@@ -173,6 +200,12 @@ class SourceIntelResult:
     #: with grading. Empty in Phase 2-4; Phase 5a populates from
     #: abort_proximate.cocci output.
     aborts: Tuple[AbortEvidence, ...] = ()
+
+    #: Axis 3: unchecked allocator call sites. Empty before Phase 6a;
+    #: Phase 6a populates from unchecked_alloc.cocci output. Each entry
+    #: indicates an allocator return value that wasn't NULL-checked
+    #: before the function continued (see AllocationEvidence).
+    allocations: Tuple[AllocationEvidence, ...] = ()
 
     @property
     def is_skipped(self) -> bool:
@@ -345,6 +378,7 @@ def analyze(
     rules_failed: List[Tuple[str, str]] = []
     observations: List[AttributeEvidence] = []
     abort_observations: List[AbortEvidence] = []
+    allocation_observations: List[AllocationEvidence] = []
 
     # spatch invocation per axis. ``no_includes=True`` matches the
     # existing PR-3 scan + PR-4 prereqs untrusted-target posture;
@@ -366,9 +400,13 @@ def analyze(
                 )
             for match in result.matches:
                 # The same parser dispatches by message prefix:
-                # attribute kinds → AttributeEvidence; abort → AbortEvidence.
+                # attribute kinds → AttributeEvidence; abort → AbortEvidence;
+                # unchecked_alloc_field → AllocationEvidence.
                 observations.extend(_parse_match_to_attribute(match))
                 abort_observations.extend(_parse_match_to_abort(match))
+                allocation_observations.extend(
+                    _parse_match_to_allocation(match)
+                )
 
     # Project-specific alias discovery: walk target headers, classify
     # `#define MACRO __attribute__((...))` patterns by family, count
@@ -402,6 +440,7 @@ def analyze(
         attributes=tuple(observations),
         discovered_aliases=discovered_alias_tuple,
         aborts=tuple(abort_observations),
+        allocations=tuple(allocation_observations),
     )
 
 
@@ -425,6 +464,46 @@ _KIND_TO_RAW_MATCH: Dict[str, str] = {
     KIND_NO_STACK_PROTECTOR: "__attribute__((no_stack_protector))",
     KIND_ACCESS: "__attribute__((access(...)))",
 }
+
+
+def _parse_match_to_allocation(match: Any) -> List[AllocationEvidence]:
+    """Convert a cocci :class:`SpatchMatch` from unchecked_alloc.cocci
+    into an :class:`AllocationEvidence` record.
+
+    Cocci emits ``unchecked_alloc_field:<allocator>:<field>``. The
+    enclosing-function lookup uses the same regex-based heuristic
+    as abort parsing.
+    """
+    msg = (getattr(match, "message", "") or "").strip()
+    if not msg.startswith("unchecked_alloc_field:"):
+        return []
+    payload = msg[len("unchecked_alloc_field:"):].strip()
+    if ":" not in payload:
+        return []
+    allocator, _, field = payload.partition(":")
+    allocator = allocator.strip()
+    field = field.strip()
+    if not allocator:
+        return []
+    file_path = getattr(match, "file", "")
+    line_no = int(getattr(match, "line", 0))
+
+    enclosing_fn = _enclosing_function(file_path, line_no) if file_path else None
+
+    try:
+        from packages.source_intel.conditional import enclosing_condition
+        cond = enclosing_condition(file_path, line_no) if file_path else None
+    except ImportError:
+        cond = None
+
+    return [AllocationEvidence(
+        allocator=allocator,
+        location=(file_path, line_no),
+        shape="field",
+        target_field=field or None,
+        enclosing_function=enclosing_fn,
+        conditional_on=cond,
+    )]
 
 
 def _parse_match_to_abort(match: Any) -> List[AbortEvidence]:

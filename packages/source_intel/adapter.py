@@ -45,6 +45,7 @@ from packages.source_intel.analyze import (
     KIND_RETURNS_NONNULL,
     KIND_WUR,
     AbortEvidence,
+    AllocationEvidence,
     AttributeEvidence,
     SourceIntelResult,
     analyze,
@@ -212,17 +213,21 @@ class SourceIntelValidator:
         finding: Finding,
         result: SourceIntelResult,
     ) -> ValidatorVerdict:
-        """Apply the verdict policy in two passes:
+        """Apply the verdict policy in three passes:
 
         1. **Abort-dominance check (Phase 5a):** if an abort-class call
            sits in the same function as the finding's sink AND the
            finding's rule_id is memory-corruption-class, the bug
            primitive aborts before exploitation — return
-           NOT_EXPLOITABLE. The Stage D LLM consumer can still see the
-           evidence in rendered strings and weigh it, but the validator
-           emits a confident negative verdict.
+           NOT_EXPLOITABLE.
 
-        2. **Attribute-evidence check (Phase 3-3d):** EXPLOITABLE when
+        2. **Unchecked-allocation check (Phase 6a, axis 3):** if the
+           finding's source line is at an allocator call site we
+           emitted as `unchecked_alloc_field` AND the rule_id is
+           null-deref-class, the structural unchecked-alloc evidence
+           directly supports the finding — return EXPLOITABLE.
+
+        3. **Attribute-evidence check (Phase 3-3d):** EXPLOITABLE when
            an attribute observation references a function named in the
            finding's snippet AND the rule_id is kind-relevant.
 
@@ -233,6 +238,9 @@ class SourceIntelValidator:
 
         if _abort_dominates_finding(finding, result):
             return ValidatorVerdict.NOT_EXPLOITABLE
+
+        if _unchecked_alloc_supports_finding(finding, result):
+            return ValidatorVerdict.EXPLOITABLE
 
         snippet = (
             (finding.source.snippet or "")
@@ -260,6 +268,63 @@ def _rule_id_is_relevant_for_kind(rule_id: str, kind: str) -> bool:
 def _rule_id_is_wur_relevant(rule_id: str) -> bool:
     """Back-compat shim — Phase 2 callers / tests."""
     return _rule_id_is_relevant_for_kind(rule_id, KIND_WUR)
+
+
+# Rule prefixes for which unchecked-allocation evidence directly
+# supports the finding. Currently null-deref family — the typical
+# manifestation of an unchecked alloc-result is a NULL deref.
+_NULL_DEREF_RULE_PREFIXES: Tuple[str, ...] = (
+    "cpp/null-dereference",
+    "c/null-dereference",
+)
+
+
+def _unchecked_alloc_supports_finding(
+    finding: Finding,
+    result: SourceIntelResult,
+) -> bool:
+    """Return True iff axis-3 evidence directly supports an EXPLOITABLE
+    verdict on this finding:
+
+    * finding's rule_id is null-deref-class, AND
+    * an unchecked-allocation site sits at the finding's source line
+      (within a small line-tolerance for column / multi-statement
+      mismatches).
+
+    Phase 6a only matches the field-assignment shape (cocci's
+    ``unchecked_alloc_field`` rule). Local-variable and nested-field
+    shapes wait for axis-3-expansion.
+    """
+    rid = finding.rule_id or ""
+    if not any(rid.startswith(p) for p in _NULL_DEREF_RULE_PREFIXES):
+        return False
+    if not result.allocations:
+        return False
+
+    src_path = finding.source.file_path or ""
+    src_line = finding.source.line or 0
+    if not src_path or not src_line:
+        return False
+
+    src_path_abs = src_path
+    if not Path(src_path).is_absolute():
+        src_path_abs = str((_DEFAULT_REPO_ROOT / src_path).resolve())
+
+    # Tight tolerance — the cocci match's line should be within a
+    # handful of lines of the finding's source. The fixture path
+    # (relative) and the cocci-emitted path (absolute) are normalised
+    # via the path-resolution above.
+    _SRC_LINE_TOLERANCE = 3
+
+    for ae in result.allocations:
+        alloc_path, alloc_line = ae.location
+        if alloc_path != src_path_abs:
+            continue
+        if abs(alloc_line - src_line) > _SRC_LINE_TOLERANCE:
+            continue
+        return True
+
+    return False
 
 
 # Memory-corruption rule_id prefixes — findings in these CWE classes
