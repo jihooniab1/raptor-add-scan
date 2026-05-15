@@ -251,43 +251,98 @@ def _evaluate_one(
         return _unknown_finding(dep, policy)
 
     spdx = spdx.strip()
-    # Multi-license SPDX expressions (``MIT OR Apache-2.0``,
-    # ``GPL-3.0 AND BSD-3-Clause``) — best-effort split. For OR
-    # the operator only needs ONE acceptable license; for AND
-    # ALL must be acceptable.
+    # SPDX-2.0 license expressions:
+    #   ``MIT``                          single id
+    #   ``MIT OR Apache-2.0``            either is fine
+    #   ``GPL-3.0 AND BSD-3-Clause``     both apply
+    #   ``GPL-2.0 WITH Classpath-...``   license with exception
+    # Operator semantics:
+    #   * OR  — choosing ONE license is sufficient; finding only if
+    #           NO choice can satisfy the policy.
+    #   * AND — ALL parts apply simultaneously; any deny / warn on
+    #           any part propagates.
+    #   * WITH — license-with-exception; treat as the base license
+    #            for now. (Per-exception policy is a future
+    #            refinement; today we evaluate the left side.)
+    # We don't support parenthesised compounds like
+    # ``(MIT OR BSD-3-Clause) AND Apache-2.0`` yet; they'd need a
+    # real parser. Almost all real PyPI / npm / Maven license
+    # expressions are flat OR / AND.
     if " OR " in spdx:
-        choices = [s.strip() for s in spdx.split(" OR ")]
-        if any(c in policy.allow for c in choices):
-            return None
-        if all(c in policy.deny for c in choices):
-            return _deny_finding(dep, spdx)
-        # Mixed / no acceptable choice — emit incompatible.
-        return LicenseFinding(
-            finding_id=_finding_id(dep, "license_incompatible"),
-            kind="license_incompatible",
-            dependency=dep,
-            spdx=spdx,
-            detail=(
-                f"Multi-license OR expression {spdx!r} has no choice "
-                f"in policy.allow; operator must pick one or add to allow"
-            ),
-            severity="medium",
-            confidence=Confidence(
-                "medium",
-                reason="OR expression with no allowlisted choice",
-            ),
-        )
+        return _evaluate_or(dep, spdx, policy)
     if " AND " in spdx:
-        choices = [s.strip() for s in spdx.split(" AND ")]
-        for c in choices:
-            f = _classify(dep, c, policy)
-            if f is not None:
-                # First denied / warned terminates — operator sees the
-                # most-significant violation.
-                return f
-        return None
+        return _evaluate_and(dep, spdx, policy)
+    if " WITH " in spdx:
+        # ``GPL-2.0 WITH Classpath-exception-2.0`` → evaluate
+        # the base license. Future refinement: a
+        # ``policy.allow_exceptions`` set could change the
+        # verdict if the exception is recognised.
+        base = spdx.split(" WITH ", 1)[0].strip()
+        return _classify(dep, base, policy)
 
     return _classify(dep, spdx, policy)
+
+
+def _evaluate_or(
+    dep: Dependency,
+    spdx: str,
+    policy: LicensePolicy,
+) -> Optional[LicenseFinding]:
+    """OR-expression policy semantics: ONE choice satisfying the
+    policy is enough.  Evaluate each choice through ``_classify``;
+    return no-finding as soon as any choice classifies as allowed.
+
+    Without this nuance the OR-handler over-flags: with the
+    default ``allow``-by-default policy, both ``MIT`` and
+    ``Apache-2.0`` individually pass (they're not in the
+    AGPL/SSPL deny-list), but the old code required at least one
+    to be in ``policy.allow`` explicitly — empty for the default
+    policy — and fell through to ``incompatible`` for every
+    common ``MIT OR Apache-2.0`` style dual-license declaration.
+    """
+    choices = [s.strip() for s in spdx.split(" OR ")]
+    classified = [(c, _classify(dep, c, policy)) for c in choices]
+    # If any choice resolves to "no finding" (allowed under the
+    # policy), the OR is satisfied.
+    if any(f is None for _, f in classified):
+        return None
+    # All choices produced findings. If they're all DENY, the
+    # OR is unambiguously denied. Otherwise it's "incompatible"
+    # (operator should pick / configure one).
+    if all(f.kind == "license_denied" for _, f in classified):
+        return _deny_finding(dep, spdx)
+    return LicenseFinding(
+        finding_id=_finding_id(dep, "license_incompatible"),
+        kind="license_incompatible",
+        dependency=dep,
+        spdx=spdx,
+        detail=(
+            f"Multi-license OR expression {spdx!r} has no choice "
+            f"that satisfies the policy; operator must pick one "
+            f"or update policy.allow"
+        ),
+        severity="medium",
+        confidence=Confidence(
+            "medium",
+            reason="OR expression with no policy-satisfying choice",
+        ),
+    )
+
+
+def _evaluate_and(
+    dep: Dependency,
+    spdx: str,
+    policy: LicensePolicy,
+) -> Optional[LicenseFinding]:
+    """AND-expression policy semantics: ALL parts apply, so any
+    deny / warn on any part propagates. First non-None finding
+    wins (operator sees the most-significant violation)."""
+    choices = [s.strip() for s in spdx.split(" AND ")]
+    for c in choices:
+        f = _classify(dep, c, policy)
+        if f is not None:
+            return f
+    return None
 
 
 def _classify(

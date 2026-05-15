@@ -194,14 +194,48 @@ def test_or_expression_all_denied_emits_denied():
     assert findings[0].kind == "license_denied"
 
 
-def test_or_expression_no_choice_in_allow_emits_incompatible():
-    """OR expression where no choice is explicitly allow-listed —
-    operator must pick. Emits incompatible (medium severity)."""
+def test_or_expression_passes_when_any_choice_default_allowed():
+    """OR expression with ``default="allow"`` (the baseline policy):
+    if neither MIT nor Apache-2.0 is in the deny-list, BOTH pass
+    individually via the default — so the OR is satisfied. Pre-fix
+    the OR-handler required at least one choice in ``policy.allow``
+    explicitly and over-flagged this canonical permissive
+    dual-license declaration as ``license_incompatible``."""
     policy = LicensePolicy(allow={"BSD-3-Clause"}, deny={"GPL-3.0"})
     findings = evaluate(
         [_dep(license="MIT OR Apache-2.0")], policy,
     )
+    assert not findings, (
+        f"expected no finding for MIT OR Apache-2.0 under "
+        f"default=allow policy; got {findings}"
+    )
+
+
+def test_or_expression_mixed_warn_deny_emits_incompatible():
+    """OR with one choice ``warn`` + one ``deny`` (no policy-satisfying
+    choice but not all-deny either): operator must pick / configure.
+    Emits incompatible (medium)."""
+    policy = LicensePolicy(
+        warn={"GPL-3.0"}, deny={"AGPL-3.0"},
+        default="deny",  # unmatched → deny so the OR can't slip
+    )
+    findings = evaluate(
+        [_dep(license="GPL-3.0 OR AGPL-3.0")], policy,
+    )
+    assert len(findings) == 1
     assert findings[0].kind == "license_incompatible"
+
+
+def test_or_expression_explicit_allow_choice_passes():
+    """OR where one choice IS in ``policy.allow``: passes regardless
+    of what the other choice is (operator has accepted that path)."""
+    policy = LicensePolicy(
+        allow={"MIT"}, default="deny",
+    )
+    findings = evaluate(
+        [_dep(license="MIT OR GPL-3.0")], policy,
+    )
+    assert not findings
 
 
 def test_and_expression_first_violation_terminates():
@@ -213,6 +247,24 @@ def test_and_expression_first_violation_terminates():
         [_dep(license="GPL-3.0 AND BSD-3-Clause")], policy,
     )
     assert findings[0].kind == "license_denied"
+
+
+def test_with_expression_evaluates_base_license():
+    """``GPL-2.0 WITH Classpath-exception-2.0`` is a license-with-
+    exception. Today we evaluate only the base license (left side).
+    Per-exception policy is a future refinement."""
+    # Base allowed (via default) → pass.
+    policy = LicensePolicy(allow=set(), deny={"AGPL-3.0"})
+    findings = evaluate(
+        [_dep(license="GPL-2.0 WITH Classpath-exception-2.0")], policy,
+    )
+    assert not findings
+    # Base denied → deny finding (exception ignored).
+    policy = LicensePolicy(deny={"GPL-2.0"}, default="allow")
+    findings = evaluate(
+        [_dep(license="GPL-2.0 WITH Classpath-exception-2.0")], policy,
+    )
+    assert findings and findings[0].kind == "license_denied"
 
 
 # ---------------------------------------------------------------------------
