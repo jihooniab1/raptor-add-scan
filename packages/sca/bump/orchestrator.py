@@ -174,6 +174,13 @@ def run_bump(
                 continue
             kept.append(cand)
         candidates = kept
+    # Discover the project's (arch, libc) platform matrix ONCE up
+    # front; passed into each per-candidate evaluator so the
+    # wheel-platform-compat detector can cross-check target wheels
+    # against what the project's base images actually supply.
+    from packages.sca.platform_matrix import discover_platform_matrix
+    platform_matrix = discover_platform_matrix(target)
+
     results: List[BumpResult] = []
     for cand in candidates:
         result = _evaluate_one(
@@ -181,6 +188,7 @@ def run_bump(
             pypi_client=pypi_client, npm_client=npm_client,
             osv_client=osv_client,
             kev_client=kev_client, epss_client=epss_client,
+            platform_matrix=platform_matrix,
             now=now,
             rapid_release_days=policy.thresholds.rapid_release_days,
         )
@@ -623,6 +631,7 @@ def _evaluate_one(
     osv_client=None,
     kev_client=None,
     epss_client=None,
+    platform_matrix=None,
     now: datetime,
     rapid_release_days: int = 30,
 ) -> BumpResult:
@@ -635,10 +644,17 @@ def _evaluate_one(
     kind and ARG-kind without an eco-map fall through to Clean
     (no bump-tier signals available for OCI yet — operator review
     on the suggest-only PR is the gate).
+
+    Inline-install PyPI candidates always go through the
+    ``evaluate_bump_supply_chain`` path with ``ecosystem="PyPI"``
+    + ``name = cand.locator``; their wheel-platform-compat check
+    fires against ``platform_matrix`` when both are present.
     """
     eco_map = None
     if cand.kind == "arg":
         eco_map = _BUILTIN_ARG_MAP.get(cand.locator)
+    elif cand.kind == "inline_install_pip":
+        eco_map = ("PyPI", cand.locator)
     findings: List[SupplyChainFinding] = []
     new_vulns: List = []
     if eco_map is not None:
@@ -649,6 +665,7 @@ def _evaluate_one(
                 current_version=cand.current_version,
                 target_version=cand.target_version,
                 pypi_client=pypi_client, npm_client=npm_client,
+                platform_matrix=platform_matrix,
                 now=now,
                 rapid_release_days=rapid_release_days,
             )

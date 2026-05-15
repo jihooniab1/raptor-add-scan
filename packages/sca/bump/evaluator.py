@@ -60,6 +60,7 @@ def evaluate_bump_supply_chain(
     target_version: str,
     pypi_client=None,
     npm_client=None,
+    platform_matrix=None,
     now: Optional[datetime] = None,
     rapid_release_days: int = _RAPID_RELEASE_DAYS,
 ) -> List[SupplyChainFinding]:
@@ -126,7 +127,177 @@ def evaluate_bump_supply_chain(
     if hook_delta is not None:
         findings.append(hook_delta)
 
+    # platform_compat_regression / _improvement — does the bump
+    # introduce a NEW wheel-platform incompat (e.g. current pin
+    # installs everywhere, target requires a newer glibc the
+    # project doesn't supply) OR resolve an existing one (the
+    # current pin breaks on aarch64; target ships a fallback wheel
+    # that works). Both directions surface.
+    #
+    # PyPI-only today; npm doesn't have wheels.
+    if (ecosystem == "PyPI" and pypi_client is not None
+            and platform_matrix is not None and platform_matrix):
+        compat_findings = _platform_compat_findings(
+            name=name,
+            current_version=current_version,
+            target_version=target_version,
+            pypi_client=pypi_client,
+            platform_matrix=platform_matrix,
+        )
+        findings.extend(compat_findings)
+
     return findings
+
+
+def _platform_compat_findings(
+    *,
+    name: str,
+    current_version: str,
+    target_version: str,
+    pypi_client,
+    platform_matrix,
+) -> List[SupplyChainFinding]:
+    """Compare current-vs-target wheel matrices against the
+    project's platform matrix; emit findings for any change in
+    compat verdict.
+
+    Cases:
+      * Current OK + target NOT OK → ``platform_compat_regression``
+        (escalates the bump verdict; introducing this is a
+        Block-tier signal because users would lose install)
+      * Current NOT OK + target OK → ``platform_compat_improvement``
+        (informational; resolves an existing issue)
+      * Both NOT OK with the same verdict → no finding (the issue
+        already existed; surface it via scan-time hygiene, not as
+        a bump-tier signal)
+    """
+    from packages.sca.wheel_compat import (
+        check_compat, wheel_matrix_for_version,
+    )
+
+    wm_target = wheel_matrix_for_version(
+        pypi_client, name, target_version,
+    )
+    if wm_target is None:
+        return []
+    # Skip when the registry didn't return any wheel filenames or
+    # sdist for the target — we can't infer compat from nothing,
+    # and the regression finding's HIGH severity would otherwise
+    # over-fire on test stubs / network-degraded states.
+    if not wm_target.wheel_tags and not wm_target.has_sdist:
+        return []
+    wm_current = wheel_matrix_for_version(
+        pypi_client, name, current_version,
+    )
+
+    target_verdicts = {
+        v.pair: v for v in check_compat(platform_matrix, wm_target)
+    }
+    current_verdicts = (
+        {v.pair: v for v in check_compat(platform_matrix, wm_current)}
+        if wm_current is not None else {}
+    )
+
+    findings: List[SupplyChainFinding] = []
+    for pair, tv in target_verdicts.items():
+        cv = current_verdicts.get(pair)
+        # Regression: current was ok (or absent), target isn't.
+        was_ok = cv is None or cv.verdict == "ok"
+        is_ok = tv.verdict == "ok"
+        if was_ok and not is_ok:
+            findings.append(_platform_compat_regression_finding(
+                name=name,
+                target_version=target_version,
+                pair=pair,
+                target_verdict=tv,
+            ))
+            continue
+        # Improvement: current was not ok, target is.
+        if cv is not None and cv.verdict != "ok" and is_ok:
+            findings.append(_platform_compat_improvement_finding(
+                name=name,
+                current_version=current_version,
+                target_version=target_version,
+                pair=pair,
+                current_verdict=cv,
+            ))
+    return findings
+
+
+def _bump_placeholder_dep(name: str, version: str) -> Dependency:
+    """Synthetic Dependency carrying the bump's (name, target_version)
+    coordinates. Used for SupplyChainFinding.dependency so renderers /
+    PR-comment generators see a populated row."""
+    return Dependency(
+        ecosystem="PyPI", name=name, version=version,
+        declared_in=Path("/<bump>"),
+        scope="main", is_lockfile=False,
+        pin_style=PinStyle.EXACT, direct=True,
+        purl=f"pkg:pypi/{name}@{version}",
+        parser_confidence=Confidence(
+            "high", reason="bump-evaluator synthetic dep",
+        ),
+    )
+
+
+def _platform_compat_regression_finding(
+    *, name, target_version, pair, target_verdict,
+) -> SupplyChainFinding:
+    return SupplyChainFinding(
+        finding_id=(
+            f"sca:supply_chain:platform_compat_regression:PyPI:{name}:"
+            f"{target_version}:{pair.arch}"
+        ),
+        kind="platform_compat_regression",
+        dependency=_bump_placeholder_dep(name, target_version),
+        detail=(
+            f"Bumping {name} to {target_version} introduces a new "
+            f"wheel-platform incompat on {pair.as_str()}: "
+            f"{target_verdict.reason}"
+        ),
+        evidence={
+            "arch": pair.arch,
+            "libc": pair.libc.as_str() if pair.libc else None,
+            "platform_source": pair.source,
+            "verdict": target_verdict.verdict,
+            "target_version": target_version,
+        },
+        severity="high",
+        confidence=Confidence(
+            "high",
+            reason="wheel platform tags compared against project matrix",
+        ),
+    )
+
+
+def _platform_compat_improvement_finding(
+    *, name, current_version, target_version, pair, current_verdict,
+) -> SupplyChainFinding:
+    return SupplyChainFinding(
+        finding_id=(
+            f"sca:supply_chain:platform_compat_improvement:PyPI:{name}:"
+            f"{target_version}:{pair.arch}"
+        ),
+        kind="platform_compat_improvement",
+        dependency=_bump_placeholder_dep(name, target_version),
+        detail=(
+            f"Bumping {name} from {current_version} to "
+            f"{target_version} resolves the existing wheel-platform "
+            f"issue on {pair.as_str()}: {current_verdict.reason}"
+        ),
+        evidence={
+            "arch": pair.arch,
+            "libc": pair.libc.as_str() if pair.libc else None,
+            "resolved_verdict": current_verdict.verdict,
+            "current_version": current_version,
+            "target_version": target_version,
+        },
+        severity="info",
+        confidence=Confidence(
+            "high",
+            reason="wheel platform tags compared against project matrix",
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

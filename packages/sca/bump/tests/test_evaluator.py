@@ -650,3 +650,151 @@ def test_pypi_chooses_earliest_upload_time_across_files() -> None:
     )
     # Earliest upload = 60 days ago = outside threshold → no finding.
     assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# platform_compat_regression / _improvement
+# ---------------------------------------------------------------------------
+
+def _pypi_with_wheels(packages_releases: dict, *,
+                       upload_iso="2025-06-01T00:00:00Z") -> _StubPyPIClient:
+    """Build a stub PyPIClient where each version's release list
+    carries wheel filenames (for the wheel-tag parser to chew on)
+    plus a realistic upload timestamp."""
+    pkgs = {}
+    for name, vers in packages_releases.items():
+        pkgs[name] = {"releases": {}}
+        for ver, filenames in vers.items():
+            pkgs[name]["releases"][ver] = [
+                {"filename": fn, "upload_time_iso_8601": upload_iso}
+                for fn in filenames
+            ]
+    return _StubPyPIClient(pkgs)
+
+
+def _matrix_with(arch: str, family: str, ver: tuple):
+    from packages.sca.platform_matrix import (
+        PlatformPair, ProjectPlatformMatrix,
+    )
+    from packages.sca.platform_matrix.glibc_db import LibcVersion
+    matrix = ProjectPlatformMatrix()
+    matrix.add(PlatformPair(
+        arch=arch, libc=LibcVersion(family, ver), source="test",
+    ))
+    return matrix
+
+
+def test_platform_compat_regression_fires_z3_aarch64_glibc236() -> None:
+    """The canonical case: current pin installs on aarch64
+    glibc 2.36; target pin requires manylinux_2_38 wheels →
+    platform_compat_regression with high severity."""
+    now = datetime(2026, 5, 15, tzinfo=timezone.utc)
+    pypi = _pypi_with_wheels({
+        "z3-solver": {
+            "4.15.0.0": [
+                "z3_solver-4.15.0.0-py3-none-manylinux_2_17_aarch64.whl",
+                "z3_solver-4.15.0.0-py3-none-manylinux_2_17_x86_64.whl",
+            ],
+            "4.16.0.0": [
+                "z3_solver-4.16.0.0-py3-none-manylinux_2_38_aarch64.whl",
+                "z3_solver-4.16.0.0-py3-none-manylinux_2_17_x86_64.whl",
+            ],
+        },
+    })
+    matrix = _matrix_with("aarch64", "glibc", (2, 36))
+    findings = evaluate_bump_supply_chain(
+        ecosystem="PyPI", name="z3-solver",
+        current_version="4.15.0.0", target_version="4.16.0.0",
+        pypi_client=pypi, npm_client=None,
+        platform_matrix=matrix, now=now,
+    )
+    regression = [f for f in findings
+                  if f.kind == "platform_compat_regression"]
+    assert len(regression) == 1
+    assert regression[0].severity == "high"
+    assert regression[0].evidence["arch"] == "aarch64"
+    assert "glibc 2.38" in regression[0].detail
+    assert "glibc 2.36" in regression[0].detail
+
+
+def test_platform_compat_improvement_fires_when_resolved() -> None:
+    """Current pin breaks on aarch64; target pin ships a
+    compatible wheel → platform_compat_improvement (info)."""
+    now = datetime(2026, 5, 15, tzinfo=timezone.utc)
+    pypi = _pypi_with_wheels({
+        "z3-solver": {
+            "4.16.0.0": [
+                # current pin: only manylinux_2_38 aarch64, breaks
+                # on glibc 2.36
+                "z3_solver-4.16.0.0-py3-none-manylinux_2_38_aarch64.whl",
+            ],
+            "4.17.0.0": [
+                # target pin: ships manylinux_2_34 fallback
+                "z3_solver-4.17.0.0-py3-none-manylinux_2_34_aarch64.whl",
+            ],
+        },
+    })
+    matrix = _matrix_with("aarch64", "glibc", (2, 36))
+    findings = evaluate_bump_supply_chain(
+        ecosystem="PyPI", name="z3-solver",
+        current_version="4.16.0.0", target_version="4.17.0.0",
+        pypi_client=pypi, npm_client=None,
+        platform_matrix=matrix, now=now,
+    )
+    improvement = [f for f in findings
+                    if f.kind == "platform_compat_improvement"]
+    assert len(improvement) == 1
+    assert improvement[0].severity == "info"
+
+
+def test_platform_compat_no_finding_when_both_ok() -> None:
+    now = datetime(2026, 5, 15, tzinfo=timezone.utc)
+    pypi = _pypi_with_wheels({
+        "requests": {
+            "2.30.0": ["requests-2.30.0-py3-none-any.whl"],
+            "2.31.0": ["requests-2.31.0-py3-none-any.whl"],
+        },
+    })
+    matrix = _matrix_with("aarch64", "glibc", (2, 36))
+    findings = evaluate_bump_supply_chain(
+        ecosystem="PyPI", name="requests",
+        current_version="2.30.0", target_version="2.31.0",
+        pypi_client=pypi, npm_client=None,
+        platform_matrix=matrix, now=now,
+    )
+    assert not any(
+        "platform_compat" in f.kind for f in findings
+    )
+
+
+def test_platform_compat_skipped_when_no_matrix() -> None:
+    """Without a platform_matrix (legacy callers / npm paths),
+    the detector silently no-ops."""
+    now = datetime(2026, 5, 15, tzinfo=timezone.utc)
+    pypi = _pypi_with_wheels({
+        "z3-solver": {
+            "4.16.0.0": [
+                "z3_solver-4.16.0.0-py3-none-manylinux_2_38_aarch64.whl",
+            ],
+        },
+    })
+    findings = evaluate_bump_supply_chain(
+        ecosystem="PyPI", name="z3-solver",
+        current_version="4.15.0.0", target_version="4.16.0.0",
+        pypi_client=pypi, npm_client=None,
+        platform_matrix=None, now=now,
+    )
+    assert not any("platform_compat" in f.kind for f in findings)
+
+
+def test_platform_compat_npm_ecosystem_skipped() -> None:
+    """npm doesn't have wheels — the detector is PyPI-only."""
+    now = datetime(2026, 5, 15, tzinfo=timezone.utc)
+    matrix = _matrix_with("aarch64", "glibc", (2, 36))
+    findings = evaluate_bump_supply_chain(
+        ecosystem="npm", name="lodash",
+        current_version="4.17.20", target_version="4.17.21",
+        pypi_client=None, npm_client=None,
+        platform_matrix=matrix, now=now,
+    )
+    assert not any("platform_compat" in f.kind for f in findings)
