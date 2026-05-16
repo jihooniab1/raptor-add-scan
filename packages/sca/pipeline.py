@@ -158,6 +158,11 @@ class RunOptions:
                                                 # logs / file redirect).
                                                 # ``--no-progress``
                                                 # forces off explicitly.
+    sbom_input: Optional[Path] = None            # CycloneDX SBOM to
+                                                # import as the dep list
+                                                # in place of discovery
+                                                # + parser dispatch.
+                                                # ``--sbom <path>``.
 
 
 @dataclass
@@ -264,18 +269,47 @@ def run_sca(
         ),
     )
     try:
-        manifests = find_manifests(target)
-        if not options.enable_inline_installs:
-            manifests = [m for m in manifests if m.ecosystem != "Inline"]
-        raw_deps: List[Dependency] = []
-        for m in manifests:
-            raw_deps.extend(parse_manifest(m))
+        if options.sbom_input is not None:
+            # Bypass discovery + parser dispatch: import the SBOM
+            # directly. Useful when the build already emitted one
+            # (cargo auditable, Maven cyclonedx-plugin, etc.) and
+            # we want to scan the exact resolved deps the build
+            # produced rather than re-parse the manifests.
+            from .sbom_import import parse_cyclonedx
+            try:
+                raw_deps, sbom_warnings = parse_cyclonedx(
+                    options.sbom_input,
+                )
+            except ValueError as e:
+                logger.error("sca.pipeline: SBOM import failed: %s", e)
+                raw_deps = []
+                sbom_warnings = [str(e)]
+            for w in sbom_warnings:
+                logger.warning("sca.pipeline: SBOM: %s", w)
+            manifests = []   # no manifests when SBOM-imported
+        else:
+            manifests = find_manifests(target)
+            if not options.enable_inline_installs:
+                manifests = [
+                    m for m in manifests if m.ecosystem != "Inline"
+                ]
+            raw_deps: List[Dependency] = []
+            for m in manifests:
+                raw_deps.extend(parse_manifest(m))
     finally:
         # Clear the resolver so test runs of subsequent scans (or
         # libraries that import pom.parse directly after pipeline)
         # don't carry the previous run's cache + client.
         _pom_inh.set_inheritance_resolver(None)
-    progress.done(f"{len(manifests)} manifests · {len(raw_deps)} deps")
+    if options.sbom_input is not None:
+        progress.done(
+            f"imported {len(raw_deps)} deps from "
+            f"{options.sbom_input.name}"
+        )
+    else:
+        progress.done(
+            f"{len(manifests)} manifests · {len(raw_deps)} deps"
+        )
 
     # 1a. Transitive expansion — for manifests without a sibling
     #     lockfile, run the matching cascade resolver in the sandbox

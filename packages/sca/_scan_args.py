@@ -50,6 +50,17 @@ def add_scan_args(parser: argparse.ArgumentParser) -> None:
         help="output directory (default: ./out/sca-<UTC timestamp>/)",
     )
     parser.add_argument(
+        "--sbom",
+        help=(
+            "import a CycloneDX SBOM as the dep list, bypassing "
+            "manifest discovery + parser dispatch. Useful when the "
+            "build system already emits an SBOM (cargo auditable, "
+            "Maven cyclonedx-plugin, Trivy, Snyk export, etc.) and "
+            "you want to scan the exact resolved deps the build "
+            "produced rather than re-parsing manifests."
+        ),
+    )
+    parser.add_argument(
         "--offline", action="store_true",
         help="skip all network calls; use cache only",
     )
@@ -262,4 +273,5 @@ def options_from_args(args: argparse.Namespace) -> RunOptions:
         enable_llm_inline_installs=args.llm_inline_installs,
         enable_impact_analysis=args.impact_analysis,
         enable_progress=not args.no_progress,
+        sbom_input=Path(args.sbom).resolve() if args.sbom else None,
     )
