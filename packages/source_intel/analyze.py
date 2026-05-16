@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
+from core.build.build_flags import BuildFlagsContext, extract_flags
 from packages.source_intel.aliases import (
     ALL_WUR_ALIASES,
     wur_alias_in,
@@ -127,6 +128,50 @@ class AbortEvidence:
 
 
 @dataclass(frozen=True)
+class CheckedAllocationEvidence:
+    """A single observation of a CHECKED allocator call site —
+    `local = alloc_fn(...); if (!local) ...` shape. Complement to
+    AllocationEvidence (axis-3 unchecked).
+
+    Used by axis-5 variant analysis to compute checked/unchecked
+    ratios per allocator. The ratio is informational only in
+    Phase 9 — Stage D LLM consumes it; the verdict policy doesn't
+    yet act on it (deferred until corpus shows it helps).
+    """
+
+    allocator: str
+    location: Tuple[str, int]
+    enclosing_function: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CapabilityEvidence:
+    """A single observation of a capability-check call (capable,
+    ns_capable, perfmon_capable, etc.). Mirrors AbortEvidence shape:
+    same grading scheme, same per-finding aggregation pattern.
+
+    A capability check that dominates a finding's bug primitive
+    means the attacker must already hold that capability before
+    the bug is reachable. For most kernel CWE classes this DOES NOT
+    eliminate the finding (privilege-bearing attackers exist), but
+    it materially reduces severity — the Validator's verdict policy
+    treats this as a **soft** signal: emits NOT_EXPLOITABLE only
+    when the capability is one of the privileged-equivalent classes
+    (CAP_SYS_ADMIN / equivalent) that already grant the attacker
+    enough power to do the harm directly.
+
+    Phase 8 emits same_function grading only; path-domination grading
+    arrives with shared axis-2/axis-4 grading machinery later.
+    """
+
+    cap_function: str  # "capable", "ns_capable", "perfmon_capable", etc.
+    location: Tuple[str, int]  # (file_path, line)
+    grade: str  # one of ``ALL_GRADES``
+    enclosing_function: Optional[str] = None
+    conditional_on: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class AttributeEvidence:
     """A single observation of a compiler attribute on a function.
 
@@ -207,6 +252,26 @@ class SourceIntelResult:
     #: before the function continued (see AllocationEvidence).
     allocations: Tuple[AllocationEvidence, ...] = ()
 
+    #: Axis 4: capability-check call sites (capable, ns_capable, …).
+    #: Empty before Phase 8; Phase 8 populates from
+    #: capability_check.cocci. Each entry records a privilege check
+    #: site whose dominance over the finding is graded by the
+    #: aggregator (see CapabilityEvidence).
+    capabilities: Tuple[CapabilityEvidence, ...] = ()
+
+    #: Axis 5: CHECKED allocator call sites — complement to
+    #: ``allocations`` (which is unchecked-only). Ratio of checked
+    #: to total is exposed via ``variant_ratio()``.
+    checked_allocations: Tuple[CheckedAllocationEvidence, ...] = ()
+
+    #: Axis 6 consumer: build-hardening flags observed in the target's
+    #: build configuration. Populated from core.build.build_flags when
+    #: signal exists; otherwise default BuildFlagsContext() (all None,
+    #: source="absent"). The verdict policy reads this to attenuate
+    #: certain claims (FORTIFY_SOURCE intercepts unbounded-write,
+    #: stack canaries gate stack BOF exploitation, etc.).
+    build_flags: Optional[BuildFlagsContext] = None
+
     @property
     def is_skipped(self) -> bool:
         return self.skipped_reason is not None
@@ -243,6 +308,26 @@ class SourceIntelResult:
             if a.kind == kind and a.function_name == name:
                 return a
         return None
+
+    def variant_ratio(self, allocator: str) -> Tuple[int, int]:
+        """Return (checked_count, unchecked_count) for ``allocator``
+        across the analyzed target. Used by axis-5 to assess whether
+        an unchecked site is anomalous within the project's idiom.
+
+        Caveats:
+          * Counts are scoped to the analyzed target subtree only —
+            they don't see external callers.
+          * The denominator (checked+unchecked) is the total
+            cocci-OBSERVED sites, not the actual call count
+            (cocci's pattern matching may miss aliased/macro forms).
+        """
+        checked = sum(
+            1 for c in self.checked_allocations if c.allocator == allocator
+        )
+        unchecked = sum(
+            1 for a in self.allocations if a.allocator == allocator
+        )
+        return (checked, unchecked)
 
 
 # =====================================================================
@@ -379,6 +464,8 @@ def analyze(
     observations: List[AttributeEvidence] = []
     abort_observations: List[AbortEvidence] = []
     allocation_observations: List[AllocationEvidence] = []
+    capability_observations: List[CapabilityEvidence] = []
+    checked_allocation_observations: List[CheckedAllocationEvidence] = []
 
     # spatch invocation per axis. ``no_includes=True`` matches the
     # existing PR-3 scan + PR-4 prereqs untrusted-target posture;
@@ -406,6 +493,12 @@ def analyze(
                 abort_observations.extend(_parse_match_to_abort(match))
                 allocation_observations.extend(
                     _parse_match_to_allocation(match)
+                )
+                capability_observations.extend(
+                    _parse_match_to_capability(match)
+                )
+                checked_allocation_observations.extend(
+                    _parse_match_to_checked_allocation(match)
                 )
 
     # Project-specific alias discovery: walk target headers, classify
@@ -441,6 +534,9 @@ def analyze(
         discovered_aliases=discovered_alias_tuple,
         aborts=tuple(abort_observations),
         allocations=tuple(allocation_observations),
+        capabilities=tuple(capability_observations),
+        checked_allocations=tuple(checked_allocation_observations),
+        build_flags=extract_flags(target),
     )
 
 
@@ -552,6 +648,74 @@ def _parse_match_to_abort(match: Any) -> List[AbortEvidence]:
         grade=GRADE_SAME_FUNCTION,
         enclosing_function=enclosing_fn,
         conditional_on=cond,
+    )]
+
+
+def _parse_match_to_capability(match: Any) -> List[CapabilityEvidence]:
+    """Convert a cocci :class:`SpatchMatch` from
+    capability_check.cocci into a :class:`CapabilityEvidence` record.
+
+    Cocci emits ``capability:<cap_function>``. Per-function lookup
+    matches the abort-evidence shape — the aggregator scopes the
+    observation to the finding's enclosing function.
+
+    Phase 8 hard-codes ``grade=same_function`` (matching axis-2's
+    Phase 5a). Path-domination grading lands when the shared
+    grading machinery for axes 2/4 ships.
+    """
+    msg = (getattr(match, "message", "") or "").strip()
+    if not msg.startswith("capability:"):
+        return []
+    cap_fn = msg[len("capability:"):].strip()
+    if not cap_fn:
+        return []
+    file_path = getattr(match, "file", "")
+    line_no = int(getattr(match, "line", 0))
+
+    enclosing_fn = (
+        _enclosing_function(file_path, line_no) if file_path else None
+    )
+
+    try:
+        from packages.source_intel.conditional import enclosing_condition
+        cond = (
+            enclosing_condition(file_path, line_no)
+            if file_path else None
+        )
+    except ImportError:
+        cond = None
+
+    return [CapabilityEvidence(
+        cap_function=cap_fn,
+        location=(file_path, line_no),
+        grade=GRADE_SAME_FUNCTION,
+        enclosing_function=enclosing_fn,
+        conditional_on=cond,
+    )]
+
+
+def _parse_match_to_checked_allocation(
+    match: Any,
+) -> List[CheckedAllocationEvidence]:
+    """Convert a cocci :class:`SpatchMatch` from
+    checked_alloc.cocci into a :class:`CheckedAllocationEvidence`
+    record. Cocci emits ``checked_alloc:<allocator>``.
+    """
+    msg = (getattr(match, "message", "") or "").strip()
+    if not msg.startswith("checked_alloc:"):
+        return []
+    allocator = msg[len("checked_alloc:"):].strip()
+    if not allocator:
+        return []
+    file_path = getattr(match, "file", "")
+    line_no = int(getattr(match, "line", 0))
+    enclosing_fn = (
+        _enclosing_function(file_path, line_no) if file_path else None
+    )
+    return [CheckedAllocationEvidence(
+        allocator=allocator,
+        location=(file_path, line_no),
+        enclosing_function=enclosing_fn,
     )]
 
 

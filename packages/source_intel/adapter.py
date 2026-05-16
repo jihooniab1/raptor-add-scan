@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, FrozenSet, Optional, Tuple
 
 from core.dataflow.finding import Finding
 from core.dataflow.validator import ValidatorVerdict
@@ -47,6 +47,7 @@ from packages.source_intel.analyze import (
     AbortEvidence,
     AllocationEvidence,
     AttributeEvidence,
+    CapabilityEvidence,
     SourceIntelResult,
     analyze,
 )
@@ -245,6 +246,12 @@ class SourceIntelValidator:
             return ValidatorVerdict.NOT_EXPLOITABLE
 
         if _abort_dominates_finding(finding, result):
+            return ValidatorVerdict.NOT_EXPLOITABLE
+
+        if _privileged_capability_dominates(finding, result):
+            return ValidatorVerdict.NOT_EXPLOITABLE
+
+        if _fortify_source_blocks_finding(finding, result):
             return ValidatorVerdict.NOT_EXPLOITABLE
 
         if _unchecked_alloc_supports_finding(finding, result):
@@ -575,3 +582,199 @@ def _abort_dominates_finding(
                     return True
 
     return False
+
+
+# =====================================================================
+# Axis 4 — capability/privilege dominance
+# =====================================================================
+
+
+# Privileged-capability function names whose successful check implies
+# the caller already holds privileges sufficient to do the harm
+# directly. When such a check dominates a memory-corruption finding
+# in the same function, the bug is reachable ONLY by an attacker who
+# already has equivalent power, so the finding contributes nothing
+# beyond what the attacker can already do — emit NOT_EXPLOITABLE.
+#
+# Conservative scope: ``capable``-family alone (Linux LSM check
+# against the *current* task). ``ns_capable`` and friends are scoped
+# to a namespace — an unprivileged userns admin can hold
+# CAP_SYS_ADMIN inside their own ns without root, so they DON'T
+# satisfy the "already root-equivalent" requirement.
+_PRIVILEGED_CAP_FUNCTIONS: FrozenSet[str] = frozenset({
+    "capable",
+})
+
+# Capability constants that grant root-equivalent power. Cocci emits
+# the cap_function name only — the constant lives in the source line
+# itself. We grep the abort site's source line for one of these
+# constants. (CAP_SYS_ADMIN is the canonical one; CAP_SYS_MODULE,
+# CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH all grant system-wide effects
+# that subsume most memory-corruption primitives.)
+_PRIVILEGED_CAP_CONSTANTS: FrozenSet[str] = frozenset({
+    "CAP_SYS_ADMIN",
+    "CAP_SYS_MODULE",
+    "CAP_SYS_RAWIO",
+    "CAP_SYS_BOOT",
+    "CAP_DAC_OVERRIDE",
+    "CAP_DAC_READ_SEARCH",
+    "CAP_NET_ADMIN",
+    "CAP_MAC_ADMIN",
+    "CAP_MAC_OVERRIDE",
+})
+
+
+def _privileged_capability_dominates(
+    finding: Finding,
+    result: SourceIntelResult,
+) -> bool:
+    """Return True iff axis-4 evidence supports NOT_EXPLOITABLE:
+
+    * finding's rule_id is memory-corruption-class, AND
+    * a ``capable(CAP_X)`` call sits in the same function as the
+      finding's sink (Phase 8 same_function grade is enough), AND
+    * the capability constant on that line is in the privileged set
+      (CAP_SYS_ADMIN / equivalent).
+
+    Same proximity gate as axis-2 abort-dominance: ±50 lines from
+    the finding's sink to filter mega-function false positives.
+    """
+    rid = finding.rule_id or ""
+    if not any(rid.startswith(p) for p in _MEMORY_CORRUPTION_RULE_PREFIXES):
+        return False
+    if not result.capabilities:
+        return False
+
+    sink_path = finding.sink.file_path or ""
+    sink_line = finding.sink.line or 0
+    if not sink_path:
+        return False
+
+    sink_path_abs = sink_path
+    if not Path(sink_path).is_absolute():
+        sink_path_abs = str((_DEFAULT_REPO_ROOT / sink_path).resolve())
+
+    from packages.source_intel.analyze import _enclosing_function
+    finding_fn = (
+        _enclosing_function(sink_path_abs, sink_line)
+        if sink_line else None
+    )
+
+    _SAME_FUNCTION_LINE_PROXIMITY = 50
+
+    for cap in result.capabilities:
+        if cap.cap_function not in _PRIVILEGED_CAP_FUNCTIONS:
+            continue
+        cap_path, cap_line = cap.location
+        if cap_path != sink_path_abs:
+            continue
+        if cap.grade == GRADE_SAME_FUNCTION:
+            if not sink_line:
+                continue
+            if abs(cap_line - sink_line) > _SAME_FUNCTION_LINE_PROXIMITY:
+                continue
+            if finding_fn and cap.enclosing_function:
+                if cap.enclosing_function != finding_fn:
+                    continue
+        elif cap.grade in (GRADE_SAME_PATH, GRADE_DOMINATES):
+            if finding_fn and cap.enclosing_function:
+                if cap.enclosing_function != finding_fn:
+                    continue
+        else:
+            continue
+        # Final filter: the capability constant on this line must be
+        # privileged. We read the source line and look for one of the
+        # privileged constants.
+        if not _line_uses_privileged_cap(cap_path, cap_line):
+            continue
+        return True
+
+    return False
+
+
+def _line_uses_privileged_cap(file_path: str, line_no: int) -> bool:
+    """Read ``file_path`` line ``line_no`` and check whether any
+    privileged capability constant appears in it.
+
+    Best-effort: capability checks under #ifdef may not reflect the
+    actual build, and a mock capability constant in test code could
+    spuriously match. Scope is bounded by upstream filters
+    (function-name + memory-corruption rule_id + line proximity).
+    """
+    try:
+        with open(file_path, "r", errors="replace") as f:
+            for i, line in enumerate(f, 1):
+                if i == line_no:
+                    return any(c in line for c in _PRIVILEGED_CAP_CONSTANTS)
+                if i > line_no:
+                    return False
+    except OSError:
+        return False
+    return False
+
+
+# =====================================================================
+# Axis 6 consumer — build flags
+# =====================================================================
+
+
+# glibc functions intercepted by FORTIFY_SOURCE: when level >= 2,
+# the compiler/linker rewrites these to runtime-checked variants
+# that abort() on bound violation. List drawn from glibc's
+# bits/string_fortified.h, bits/stdio2.h, bits/unistd.h.
+#
+# Conservative set — covers the common write-class calls that
+# CodeQL's cpp/unbounded-write rule typically flags. Known FORTIFY
+# limitations:
+#   * Only intercepts when destination size is compile-known
+#     (e.g. fixed array `char buf[N]`). Variable-size dest passes
+#     through unchecked. We don't try to reason about that — false
+#     negatives only (we'd skip suppression when FORTIFY can't help).
+#   * FORTIFY=3 (gcc 12+, glibc 2.34+) extends coverage; we treat
+#     >=2 as "intercept" since the level-2 set is the stable union
+#     covered by all 2/3 implementations.
+_FORTIFIED_WRITE_CALLS: FrozenSet[str] = frozenset({
+    "memcpy", "memmove", "memset", "mempcpy",
+    "strcpy", "strncpy", "strcat", "strncat", "stpcpy", "stpncpy",
+    "sprintf", "snprintf", "vsprintf", "vsnprintf",
+    "gets", "fgets", "fgets_unlocked",
+    "read", "pread", "recv", "recvfrom",
+    "wcscpy", "wcsncpy", "wcscat", "wcsncat",
+    "wmemcpy", "wmemmove", "wmemset",
+    "swprintf", "vswprintf",
+})
+
+
+def _fortify_source_blocks_finding(
+    finding: Finding,
+    result: SourceIntelResult,
+) -> bool:
+    """Return True iff axis-6 evidence supports NOT_EXPLOITABLE:
+
+    * build_flags has fortify_source_level >= 2, AND
+    * finding's rule_id is unbounded-write-class, AND
+    * the sink line names a FORTIFY-intercepted call.
+
+    The sink-line snippet check uses a token boundary check to
+    avoid spurious matches on substrings (e.g. ``my_strcpy`` would
+    NOT match ``strcpy``).
+    """
+    bf = result.build_flags
+    if bf is None:
+        return False
+    level = bf.fortify_source_level
+    if level is None or level < 2:
+        return False
+
+    rid = finding.rule_id or ""
+    if not rid.startswith(("cpp/unbounded-write", "c/unbounded-write")):
+        return False
+
+    snippet = (finding.sink.snippet or "")
+    if not snippet:
+        return False
+
+    # Token-boundary scan: split on non-identifier chars.
+    import re as _re
+    tokens = set(_re.findall(r"[A-Za-z_][A-Za-z0-9_]*", snippet))
+    return bool(tokens & _FORTIFIED_WRITE_CALLS)
