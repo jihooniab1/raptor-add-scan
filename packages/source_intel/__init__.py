@@ -8,6 +8,11 @@ Public API:
   * :func:`derive_evidence_strings` — render evidence for prompts
   * :class:`SourceIntelCache` — in-memory content-addressed cache
   * :class:`SourceIntelValidator` — corpus-runner Validator adapter
+  * :func:`make_source_intel_collector` — evidence-collector factory
+    for ``DataflowValidator(evidence_collector=...)``
+  * :func:`make_cwe_dispatched_collector` — composes source_intel
+    with the PR1 V2 sanitizer-extraction collector via rule_id-prefix
+    dispatch
 
 See ``~/design/dataflow-sanitizer-bypass.md`` ("Mechanism #4 —
 source_intel") for the design + axis roadmap.
@@ -41,6 +46,11 @@ from packages.source_intel.discovery import (
     DiscoveryResult,
     discover_aliases,
 )
+from packages.source_intel.llm_bridge import (
+    DEFAULT_SOURCE_INTEL_RULE_PREFIXES,
+    make_cwe_dispatched_collector,
+    make_source_intel_collector,
+)
 from packages.source_intel.render import derive_evidence_strings
 
 __all__ = [
@@ -49,6 +59,7 @@ __all__ = [
     "AbortEvidence",
     "AllocationEvidence",
     "AttributeEvidence",
+    "DEFAULT_SOURCE_INTEL_RULE_PREFIXES",
     "DiscoveryResult",
     "GRADE_DOMINATES",
     "GRADE_SAME_FUNCTION",
@@ -69,4 +80,6 @@ __all__ = [
     "derive_evidence_strings",
     "discover_aliases",
     "enclosing_condition",
+    "make_cwe_dispatched_collector",
+    "make_source_intel_collector",
 ]
