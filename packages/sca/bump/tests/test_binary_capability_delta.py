@@ -338,6 +338,62 @@ class TestBinaryCapabilityDeltaFinding:
 # ---------------------------------------------------------------------------
 
 
+class TestEvidenceFingerprintShape:
+    """The bump finding's evidence carries the per-side
+    fingerprint dicts (binary_sha256 + arch/bits/format + bucket
+    list) so SBOM-side ``raptor:cap_fp:*`` properties can be
+    correlated with which bump triggered the finding."""
+
+    def test_evidence_has_current_and_target_fingerprints(
+        self, patched_analyser,
+    ):
+        cur = patched_analyser["add_binary"](
+            "cur.bin", imports=["malloc"],
+        )
+        tgt = patched_analyser["add_binary"](
+            "tgt.bin", imports=["malloc", "execve"],
+        )
+        finding = binary_capability_delta_finding(
+            ecosystem="Container", name="alpine",
+            current_version="3.18", target_version="3.19",
+            current_binary=cur, target_binary=tgt,
+        )
+        assert finding is not None
+        ev = finding.evidence
+        # Bump-specific fields preserved
+        assert ev["current_version"] == "3.18"
+        assert ev["target_version"] == "3.19"
+        # Fingerprint sub-dicts present + populated
+        cur_fp = ev["current_fingerprint"]
+        tgt_fp = ev["target_fingerprint"]
+        assert len(cur_fp["binary_sha256"]) == 64
+        assert len(tgt_fp["binary_sha256"]) == 64
+        # Format/arch/bits surfaced from the fingerprint
+        assert cur_fp["format"] in ("elf", "macho", "pe", None)
+        # Target binary's bucket set includes the new exec bucket;
+        # current's does not (this is the real signal)
+        assert "exec" in tgt_fp["buckets"]
+        assert "exec" not in cur_fp["buckets"]
+
+    def test_fingerprint_buckets_sorted_for_stable_evidence(
+        self, patched_analyser,
+    ):
+        cur = patched_analyser["add_binary"](
+            "cur.bin", imports=["malloc"],
+        )
+        tgt = patched_analyser["add_binary"](
+            "tgt.bin", imports=["malloc", "execve", "recv", "strcpy"],
+        )
+        finding = binary_capability_delta_finding(
+            ecosystem="Container", name="x", current_version="1",
+            target_version="2",
+            current_binary=cur, target_binary=tgt,
+        )
+        tgt_buckets = finding.evidence["target_fingerprint"]["buckets"]
+        # Sorted = stable diffs between successive bump runs
+        assert tgt_buckets == sorted(tgt_buckets)
+
+
 def test_real_radare2_against_ls():
     """Diff /bin/ls against itself — no new capabilities, empty
     delta. Exercises the full radare2 wire-through end-to-end.
