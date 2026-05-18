@@ -318,6 +318,39 @@ def test_strip_descriptor_scoped_no_descriptor():
     assert _strip_descriptor("@types/react") == "@types/react"
 
 
+def test_strip_descriptor_yarn_parent_child_resolution():
+    """Yarn's ``parent/child`` resolution key — the parent is only a
+    position filter; the actual package name is the child. Pre-fix
+    SCA used the whole ``parent/child`` string as a package name
+    and emitted a URL-encoded ``parent%2Fchild`` registry lookup
+    that npm returned 405 on. Surfaced by the May 2026 200-project
+    sweep against Grafana's resolutions block:
+
+        "ngtemplate-loader/loader-utils": "^2.0.0"
+
+    means "pin ``loader-utils`` to ^2.0.0 when ``ngtemplate-loader``
+    transitively pulls it in" — record ``loader-utils`` only.
+    """
+    assert _strip_descriptor(
+        "ngtemplate-loader/loader-utils",
+    ) == "loader-utils"
+
+
+def test_strip_descriptor_yarn_parent_child_with_descriptor():
+    """``parent/child@selector`` — strip parent THEN descriptor."""
+    assert _strip_descriptor(
+        "ngtemplate-loader/loader-utils@npm:^2.0",
+    ) == "loader-utils"
+
+
+def test_strip_descriptor_scoped_not_treated_as_parent_child():
+    """A scoped-name key (``@scope/pkg``) starts with ``@`` and must
+    NOT be mistaken for a yarn parent/child resolution. The /
+    inside the scope is part of the package's canonical name."""
+    assert _strip_descriptor("@scope/pkg") == "@scope/pkg"
+    assert _strip_descriptor("@scope/pkg@npm:^1.0") == "@scope/pkg"
+
+
 # ---------------------------------------------------------------------------
 # npm / Yarn workspaces — find_npm_workspace_root + workspace_root linkage
 # ---------------------------------------------------------------------------

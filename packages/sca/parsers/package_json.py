@@ -246,7 +246,20 @@ def _strip_descriptor(spec_key: str) -> str:
 
     ``foo`` → ``foo``
     ``foo@npm:^1.0`` → ``foo``
+    ``@scope/pkg`` → ``@scope/pkg``
     ``@scope/pkg@npm:^1.0`` → ``@scope/pkg``
+
+    Yarn's parent/child resolution shape: ``parent/child`` (no
+    leading ``@``) means "pin ``child`` only when ``parent``
+    transitively pulls it in". The package name to record is the
+    CHILD — the parent is only a position filter. Surfaced by the
+    May 2026 200-project sweep when Grafana's package.json had
+    ``"ngtemplate-loader/loader-utils": "^2.0.0"`` and the parser
+    used the whole ``parent/child`` string as the package name,
+    producing a URL-encoded ``parent%2Fchild`` registry lookup
+    that npm returned 405 on.
+
+    ``ngtemplate-loader/loader-utils`` → ``loader-utils``
     """
     if spec_key.startswith("@"):
         # Scoped: keep the leading @ and the first @ after the slash
@@ -259,6 +272,13 @@ def _strip_descriptor(spec_key: str) -> str:
         if sep == -1:
             return spec_key
         return spec_key[:slash] + rest[:sep]
+    # Unscoped: handle yarn's ``parent/child`` resolution before
+    # ``name@selector`` because a ``parent/child@selector`` key
+    # has both shapes and the parent's position is what gets
+    # stripped first (we want the child's name, then the child's
+    # name with selector stripped).
+    if "/" in spec_key:
+        spec_key = spec_key.split("/", 1)[1]
     sep = spec_key.find("@")
     if sep <= 0:
         return spec_key
