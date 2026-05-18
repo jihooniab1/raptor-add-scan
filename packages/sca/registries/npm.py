@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 _CACHE_KEY_PREFIX = "npm-versions"
 _DEFAULT_TTL = 24 * 3600
 
+# Cap raised above the global 50 MB default. Popular scoped
+# namespaces like ``@grafana/runtime`` / ``@grafana/ui`` ship
+# cumulative version metadata that exceeds the global default;
+# the May 2026 200-project sweep against Grafana surfaced this
+# as a silent meta-fetch failure across 3+ packages. 200 MB
+# absorbs every namespace observed in OSS-corpus practice
+# without inviting registry-bomb concerns at the transport
+# layer.
+_NPM_META_MAX_BYTES = 200 * 1024 * 1024
+
 # Loose semver matcher; the registry's keys are canonical semver but we
 # guard against pre-release tags being treated as stable. Pre-releases
 # follow the ``-`` convention: ``1.0.0-rc.1``, ``1.0.0-beta``, etc.
@@ -62,7 +72,12 @@ class NpmClient:
         return None
 
     def get_metadata(self, name: str) -> Optional[dict]:
-        """Return the raw npm registry document for a package."""
+        """Return the raw npm registry document for a package.
+
+        Uses ``_NPM_META_MAX_BYTES`` (200 MB) as the cap because
+        popular scoped namespaces like ``@grafana/runtime`` ship
+        cumulative version metadata above the global 50 MB default.
+        """
         encoded = urllib.parse.quote(name, safe="@")
         cache_key = f"npm-meta:{name}"
         if self._cache is not None:
@@ -75,6 +90,7 @@ class NpmClient:
             data = self._http.get_json(
                 f"{self._base_url}/{encoded}",
                 headers=self._request_headers(),
+                max_bytes=_NPM_META_MAX_BYTES,
             )
         except Exception as e:                # noqa: BLE001
             logger.warning("sca.registries.npm: meta fetch failed for %r: %s",
@@ -103,6 +119,7 @@ class NpmClient:
             data = self._http.get_json(
                 f"{self._base_url}/{encoded}",
                 headers=self._request_headers(),
+                max_bytes=_NPM_META_MAX_BYTES,
             )
         except Exception as e:                # noqa: BLE001
             logger.warning("sca.registries.npm: fetch failed for %r: %s",

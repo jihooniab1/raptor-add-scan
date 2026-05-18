@@ -148,7 +148,7 @@ def test_pypi_client_uses_override_url(monkeypatch):
     captured = {}
 
     class _StubHttp:
-        def get_json(self, url, headers=None):
+        def get_json(self, url, headers=None, **kw):
             captured["url"] = url
             captured["headers"] = headers
             return {"info": {}, "releases": {}}
@@ -179,7 +179,7 @@ def test_pypi_client_default_when_no_override(monkeypatch):
     captured = {}
 
     class _StubHttp:
-        def get_json(self, url, headers=None):
+        def get_json(self, url, headers=None, **kw):
             captured["url"] = url
             captured["headers"] = headers
             return {"info": {}, "releases": {}}
@@ -201,7 +201,7 @@ def test_npm_client_uses_override_url(monkeypatch):
     captured = {}
 
     class _StubHttp:
-        def get_json(self, url, headers=None):
+        def get_json(self, url, headers=None, **kw):
             captured["url"] = url
             captured["headers"] = headers
             return {}
@@ -223,7 +223,7 @@ def test_maven_client_uses_override_url(monkeypatch):
     captured = {}
 
     class _StubHttp:
-        def get_json(self, url, headers=None):
+        def get_json(self, url, headers=None, **kw):
             captured["url"] = url
             return {}
 

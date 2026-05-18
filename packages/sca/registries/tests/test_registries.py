@@ -39,8 +39,15 @@ class _FakeHttp:
 
     def get_json(self, url: str, timeout: int = 30,
                  headers: Optional[Dict[str, str]] = None,
+                 *,
+                 max_bytes: int = 0,
+                 **kw,
                  ) -> Dict[str, Any]:
+        # ``max_bytes`` is recorded per call so per-registry tests can
+        # assert specific caps (e.g. npm should pass a higher cap than
+        # the global default to handle large scoped namespaces).
         self.calls.append(url)
+        self.last_max_bytes = max_bytes
         if self.raise_exc is not None:
             raise self.raise_exc
         return self.json_payload or {}
@@ -108,6 +115,33 @@ def test_npm_scoped_name_url_encoded() -> None:
     http = _FakeHttp(json_payload={"versions": {"1.0.0": {}}})
     client = NpmClient(http)
     client.list_versions("@anthropic-ai/claude-code")
+
+
+def test_npm_passes_high_max_bytes_for_registry_metadata() -> None:
+    """``registry.npmjs.org``'s scoped-namespace metadata for popular
+    packages (e.g. ``@grafana/runtime``) can exceed the global
+    50 MB ``DEFAULT_MAX_BYTES``. The npm client must raise the cap
+    explicitly — the May 2026 200-project sweep against Grafana
+    hit this as a silent meta-fetch failure pre-fix.
+    """
+    http = _FakeHttp(json_payload={"versions": {"1.0.0": {}}})
+    client = NpmClient(http)
+    client.list_versions("@grafana/runtime")
+    # Cap must be greater than the global 50 MB default.
+    assert http.last_max_bytes >= 100 * 1024 * 1024, (
+        f"npm meta call passed max_bytes={http.last_max_bytes}, "
+        f"expected >= 100 MB"
+    )
+
+
+def test_npm_get_metadata_uses_high_max_bytes() -> None:
+    """Same assertion for the ``get_metadata`` path used by the
+    registry_metadata supply-chain detector (recent_publish /
+    maintainer_change / version_publish)."""
+    http = _FakeHttp(json_payload={"name": "x", "versions": {}})
+    client = NpmClient(http)
+    client.get_metadata("@grafana/runtime")
+    assert http.last_max_bytes >= 100 * 1024 * 1024
     assert "%2F" in http.calls[0] or "/" in http.calls[0]
 
 

@@ -377,6 +377,32 @@ def fetch_image_sbom(
     """
     try:
         ref = parse_image_ref(image)
+    except ValueError as e:
+        # ``image@<not-a-digest>`` (e.g. ``bitnami/kafka@3.7.0``) is a
+        # common operator typo where ``@`` was used instead of ``:``
+        # for the tag separator. We can't safely re-interpret it
+        # (a truncated digest would also land here, and silently
+        # rewriting it to a tag could mask a real malformation), so
+        # we skip — but at DEBUG level, not WARNING. Operators
+        # asking SCA to scan a directory containing Helm-rendered
+        # YAML or third-party docker-compose files shouldn't see
+        # WARN-level noise for upstream-authored content the
+        # operator doesn't control. The earlier behaviour fired
+        # WARN per occurrence; the May 2026 200-project sweep
+        # produced 4 such WARNs from one project's vendored
+        # compose files alone.
+        if "malformed digest" in str(e):
+            logger.debug(
+                "sca.dockerfile_from: image ref %r uses @ for tag "
+                "(should be :); skipping: %s",
+                image, e,
+            )
+        else:
+            logger.warning(
+                "sca.dockerfile_from: cannot parse image ref %r: %s",
+                image, e,
+            )
+        return None
     except Exception as e:                          # noqa: BLE001
         logger.warning(
             "sca.dockerfile_from: cannot parse image ref %r: %s",

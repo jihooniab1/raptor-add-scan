@@ -700,3 +700,42 @@ def test_scan_image_sources_skips_unresolvable_refs(tmp_path):
     assert fetched == [], (
         f"OCI client invoked for filtered refs: {fetched}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Malformed @-tag refs (image@<tag> instead of image:<tag>)
+# ---------------------------------------------------------------------------
+
+def test_at_tag_ref_demoted_to_debug(tmp_path: Path, caplog) -> None:
+    """``bitnami/kafka@3.7.0`` is a common operator typo: ``@`` was
+    used in place of ``:`` for the tag separator. The parser
+    correctly rejects it (digest must be ``<algorithm>:<hex>``), but
+    the dockerfile_from scanner should log at DEBUG level — not
+    WARNING — because it's noise from upstream-authored files the
+    operator may not control (vendored compose / helm-rendered YAML).
+
+    Surfaced by the May 2026 200-project sweep: one project emitted
+    multiple WARN-level lines for this exact pattern.
+    """
+    import logging
+    from packages.sca.dockerfile_from import fetch_image_sbom
+
+    class _UnusedClient:
+        def fetch_manifest(self, ref, reference=None):
+            raise AssertionError("client must not be invoked")
+
+    with caplog.at_level(logging.WARNING):
+        out = fetch_image_sbom(
+            "index.docker.io/bitnami/kafka@3.7.0",
+            client=_UnusedClient(),
+        )
+    assert out is None
+    warning_records = [
+        r for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and "cannot parse image ref" in r.getMessage()
+    ]
+    assert warning_records == [], (
+        f"@<tag> noise should be at DEBUG, not WARNING; got "
+        f"{[r.getMessage() for r in warning_records]}"
+    )
