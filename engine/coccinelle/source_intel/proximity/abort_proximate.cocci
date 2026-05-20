@@ -31,7 +31,16 @@
 //   assert — libc (NDEBUG-off behaviour; otherwise no-op)
 
 @abort_one_arg@
-identifier abort_name = { BUG_ON, BUG, panic, abort, __builtin_trap, _Exit, assert };
+identifier abort_name = {
+    BUG_ON, BUG, panic, abort, __builtin_trap, _Exit, assert,
+    // ASSERT/VERIFY family — appears widely beyond its
+    // origins: OpenZFS (Linux + FreeBSD + illumos forks),
+    // DTrace (dtrace4linux), illumos userland, plus various
+    // tracing / observability libraries that absorbed the
+    // convention.
+    ASSERT, ASSERT3U, ASSERT3S, ASSERT3P, ASSERT0,
+    VERIFY, VERIFY3U, VERIFY3S, VERIFY3P, VERIFY0
+};
 expression cond;
 position p;
 @@
