@@ -25,7 +25,6 @@ maps).
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -170,20 +169,15 @@ def _to_pascal(name: str) -> str:
 def _walk_php_sources(
     target: Path, *, max_depth: int,
 ) -> Iterable[Path]:
-    from ..discovery import EXCLUDED_DIR_NAMES
-    root_depth = len(target.parts)
-    # PHP-specific extras: ``var/`` (Symfony cache+logs) and the bare
-    # ``cache`` dir (some frameworks use it for compiled templates).
-    skip_dirs = EXCLUDED_DIR_NAMES | {"var", "cache"}
-    for dirpath, dirnames, filenames in os.walk(str(target), followlinks=False):
-        cur = Path(dirpath)
-        if len(cur.parts) - root_depth >= max_depth:
-            dirnames[:] = []
-        else:
-            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-        for fn in filenames:
-            if fn.endswith(".php"):
-                yield cur / fn
+    # PHP-specific extras: ``var/`` (Symfony cache+logs) and the
+    # bare ``cache`` dir (some frameworks use it for compiled
+    # templates). Both passed to the shared walker so other reach
+    # scanners still see those subtrees.
+    from ._walker import iter_source_files
+    return iter_source_files(
+        target, {".php"}, max_depth=max_depth,
+        extra_excluded_dir_names=frozenset({"var", "cache"}),
+    )
 
 
 def _is_test_file(path: Path, target: Path) -> bool:

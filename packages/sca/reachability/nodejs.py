@@ -29,7 +29,6 @@ Specifier → package name:
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -53,10 +52,9 @@ _REQUIRE_RE = re.compile(
     re.VERBOSE | re.MULTILINE | re.DOTALL,
 )
 
-# Directories we never descend into. Sourced from the canonical
-# discovery.EXCLUDED_DIR_NAMES so a new entry there propagates here.
-from ..discovery import EXCLUDED_DIR_NAMES
-_EXCLUDED_DIRS: Set[str] = EXCLUDED_DIR_NAMES
+# Directory exclusions live in ``_walker.py`` now — sourced from
+# ``discovery.EXCLUDED_DIR_NAMES`` so a new entry there still
+# propagates through the shared walk.
 
 _TEST_DIR_NAMES: Set[str] = {"tests", "test", "__tests__", "spec", "e2e"}
 _TEST_FILE_RE = re.compile(r".*\.(test|spec)\.[mc]?[jt]sx?$")
@@ -172,18 +170,11 @@ def _specifier_to_package(spec: str) -> Optional[str]:
 
 
 def _walk_js_sources(target: Path, *, max_depth: int) -> Iterable[Path]:
-    target_str = str(target)
-    base_depth = len(target.parts)
-    for dirpath, dirnames, filenames in os.walk(target_str, followlinks=False):
-        cur = Path(dirpath)
-        depth = len(cur.parts) - base_depth
-        if depth >= max_depth:
-            dirnames[:] = []
-        else:
-            dirnames[:] = [d for d in dirnames if d not in _EXCLUDED_DIRS]
-        for fn in filenames:
-            if Path(fn).suffix in _JS_SUFFIXES:
-                yield cur / fn
+    # Delegates to the shared walker so the 8 reach scanners
+    # collectively pay one ``os.walk`` per ``(target, max_depth)``
+    # instead of seven redundant traversals.
+    from ._walker import iter_source_files
+    return iter_source_files(target, _JS_SUFFIXES, max_depth=max_depth)
 
 
 def _is_test_file(path: Path, target: Path) -> bool:

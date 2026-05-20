@@ -17,7 +17,6 @@ is "does any namespace start with the package name?". Confidence is
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -134,23 +133,16 @@ def _imports_in(suffix: str, text: str) -> Iterable[Tuple[str, int]]:
 def _walk_dotnet_sources(
     target: Path, *, max_depth: int,
 ) -> Iterable[Path]:
-    from ..discovery import EXCLUDED_DIR_NAMES
-    root_depth = len(target.parts)
     # .NET-specific extras: ``bin``/``obj`` (build outputs) and the
     # bare ``packages`` dir (NuGet's per-project install location —
     # shadows the canonical "monorepo packages/ is legitimate" rule
-    # only inside .NET tree walks).
-    skip_dirs = EXCLUDED_DIR_NAMES | {"bin", "obj", "packages"}
-    suffixes = {".cs", ".fs", ".vb"}
-    for dirpath, dirnames, filenames in os.walk(str(target), followlinks=False):
-        cur = Path(dirpath)
-        if len(cur.parts) - root_depth >= max_depth:
-            dirnames[:] = []
-        else:
-            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-        for fn in filenames:
-            if any(fn.endswith(s) for s in suffixes):
-                yield cur / fn
+    # only inside .NET tree walks). Applied via the shared walker so
+    # other reach scanners still see those subtrees.
+    from ._walker import iter_source_files
+    return iter_source_files(
+        target, {".cs", ".fs", ".vb"}, max_depth=max_depth,
+        extra_excluded_dir_names=frozenset({"bin", "obj", "packages"}),
+    )
 
 
 def _is_test_file(path: Path, target: Path) -> bool:

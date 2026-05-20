@@ -178,6 +178,12 @@ def scan(
                 cve_dep_keys=cve_dep_keys, http=http, cache=cache,
             )
 
+    # Free the per-ecosystem scan_result mappings — the function-level
+    # tiers don't consult them (they build their own inventory + index).
+    # On Grafana ~30 MB total; cheap drop, but every MB before the
+    # function-level index build helps on memory-constrained hosts.
+    eco_scans.clear()
+
     # Function-level reachability tier. Inventory-based resolver
     # from ``core.inventory.reachability`` consumes per-language
     # call_graph data emitted by the inventory builder (Python AST

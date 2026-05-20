@@ -12,7 +12,6 @@ import path is exactly that, OR is a sub-package of it
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -178,18 +177,8 @@ def _imports_in(text: str) -> Iterable[Tuple[str, int]]:
 def _walk_go_sources(
     target: Path, *, max_depth: int,
 ) -> Iterable[Path]:
-    from ..discovery import EXCLUDED_DIR_NAMES
-    root_depth = len(target.parts)
-    skip_dirs = EXCLUDED_DIR_NAMES
-    for dirpath, dirnames, filenames in os.walk(str(target), followlinks=False):
-        cur = Path(dirpath)
-        if len(cur.parts) - root_depth >= max_depth:
-            dirnames[:] = []
-        else:
-            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-        for fn in filenames:
-            if fn.endswith(".go"):
-                yield cur / fn
+    from ._walker import iter_source_files
+    return iter_source_files(target, {".go"}, max_depth=max_depth)
 
 
 def _is_test_file(path: Path) -> bool:

@@ -26,8 +26,6 @@ import ast
 import json
 import logging
 import warnings
-import os
-import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -35,14 +33,10 @@ from ..models import Confidence, Reachability
 
 logger = logging.getLogger(__name__)
 
-# Directories we never descend into. Sourced from the canonical
-# discovery.EXCLUDED_DIR_NAMES (which already includes ``.claude``,
-# build/cache/vcs dirs, etc.); we add ``site-packages`` for any
-# virtualenv that snuck in under a non-canonical name.
-from ..discovery import EXCLUDED_DIR_NAMES
-_EXCLUDED_DIRS: Set[str] = EXCLUDED_DIR_NAMES | {
-    "site-packages",
-}
+# Directory exclusions are handled by ``_walker.py`` now — sourced
+# from ``discovery.EXCLUDED_DIR_NAMES``. The python-specific
+# ``site-packages`` exclusion is passed to ``iter_source_files`` at
+# the call site below.
 
 # Filename / directory patterns that mark test code. Reachability through
 # test files alone shouldn't promote a dep to ``imported`` for production
@@ -319,18 +313,15 @@ def _dotted_prefixes(name: str) -> Iterable[str]:
 
 
 def _walk_python_sources(target: Path, *, max_depth: int) -> Iterable[Path]:
-    target_str = str(target)
-    base_depth = len(target.parts)
-    for dirpath, dirnames, filenames in os.walk(target_str, followlinks=False):
-        cur = Path(dirpath)
-        depth = len(cur.parts) - base_depth
-        if depth >= max_depth:
-            dirnames[:] = []
-        else:
-            dirnames[:] = [d for d in dirnames if d not in _EXCLUDED_DIRS]
-        for fn in filenames:
-            if fn.endswith(".py"):
-                yield cur / fn
+    # Delegates to the shared walker (one ``os.walk`` per target
+    # across all reach scanners). ``site-packages`` is the only
+    # python-specific extra exclusion beyond
+    # ``discovery.EXCLUDED_DIR_NAMES`` — passed as an extra dir name.
+    from ._walker import iter_source_files
+    return iter_source_files(
+        target, {".py"}, max_depth=max_depth,
+        extra_excluded_dir_names=frozenset({"site-packages"}),
+    )
 
 
 def _format_evidence(

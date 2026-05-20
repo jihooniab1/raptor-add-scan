@@ -247,29 +247,14 @@ def _walk_java_sources(
     """Yield ``*.java`` files under root, skipping vendored / build
     output / IDE tree noise. Test files are emitted but tagged
     ``is_test=True`` upstream."""
-    skip_dirs = {
-        ".git", ".gradle", ".idea", ".mvn", "build", "target",
-        "out", "node_modules", "bin", "obj", "dist",
-    }
-    for path in _bounded_walk(root, max_depth, skip_dirs):
-        if path.suffix == ".java":
-            yield path
-
-
-def _bounded_walk(
-    root: Path, max_depth: int, skip_dirs: set,
-) -> Iterable[Path]:
-    """Depth-bounded walk that skips noisy directories."""
-    import os
-    root_parts = len(root.parts)
-    for dirpath, dirnames, filenames in os.walk(root):
-        depth = len(Path(dirpath).parts) - root_parts
-        if depth > max_depth:
-            dirnames[:] = []
-            continue
-        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-        for name in filenames:
-            yield Path(dirpath) / name
+    # Java-specific extras beyond ``discovery.EXCLUDED_DIR_NAMES``:
+    # ``.mvn`` (Maven wrapper config), ``bin``/``obj`` (Eclipse +
+    # mixed C/C# output dirs that show up in polyglot trees).
+    from ._walker import iter_source_files
+    return iter_source_files(
+        root, {".java"}, max_depth=max_depth,
+        extra_excluded_dir_names=frozenset({".mvn", "bin", "obj"}),
+    )
 
 
 def _is_test_file(path: Path) -> bool:

@@ -16,7 +16,6 @@ Caveats:
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -123,19 +122,14 @@ def _requires_in(text: str) -> Iterable[Tuple[str, int]]:
 def _walk_ruby_sources(
     target: Path, *, max_depth: int,
 ) -> Iterable[Path]:
-    from ..discovery import EXCLUDED_DIR_NAMES
-    root_depth = len(target.parts)
-    # Ruby-specific extras: ``tmp/`` and ``log/`` (Rails conventions).
-    skip_dirs = EXCLUDED_DIR_NAMES | {"tmp", "log"}
-    for dirpath, dirnames, filenames in os.walk(str(target), followlinks=False):
-        cur = Path(dirpath)
-        if len(cur.parts) - root_depth >= max_depth:
-            dirnames[:] = []
-        else:
-            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-        for fn in filenames:
-            if fn.endswith(".rb"):
-                yield cur / fn
+    # Ruby-specific extras: ``tmp/`` and ``log/`` (Rails
+    # conventions). Both passed to the shared walker so other reach
+    # scanners still see those subtrees.
+    from ._walker import iter_source_files
+    return iter_source_files(
+        target, {".rb"}, max_depth=max_depth,
+        extra_excluded_dir_names=frozenset({"tmp", "log"}),
+    )
 
 
 def _is_test_file(path: Path, target: Path) -> bool:
