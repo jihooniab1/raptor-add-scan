@@ -1413,18 +1413,51 @@ def _lookup_latest_release_or_tag(
 
 
 def _is_major_bump(current: str, target: str) -> bool:
-    """True if ``target`` is in a different major version than
-    ``current``. Used by the ``block_on_major`` policy threshold.
+    """True if ``target`` is a major-equivalent jump from ``current``.
+    Used by the ``block_on_major`` policy threshold.
+
+    Two cases count as major-equivalent:
+
+      1. **Different ``major``** at 1.x+ on either side
+         (``v4 → v7.0.1``, ``11-jdk → 26-jdk``).
+
+      2. **Different ``minor`` while both are still at major
+         zero** (``0.84 → 0.103``). Per semver §4 pre-1.0
+         versions provide NO stability guarantees; npm / Cargo /
+         Composer compatibility solvers all default-cap at the
+         minor for ``0.y.z`` ranges. RAPTOR mirrors that
+         convention so operators using ``block_on_major: true``
+         catch the ``openai 0.84 → 0.103``-class of pre-1.0
+         API churn that's almost-always breaking.
+
+    Variant suffixes (``-jdk``, ``-slim``, ``-alpine``) are
+    stripped via ``parse_stable_with_variant``; ``oci_latest_tag``
+    constrains target to same-variant-as-current so the variant
+    string itself isn't part of the comparison.
 
     Conservative: if either version can't be parsed as
-    stable-semver, returns False (don't force-block what we
-    can't reason about)."""
-    from core.upstream_latest._version_filter import parse_stable
-    cur = parse_stable(current)
-    tgt = parse_stable(target)
-    if cur is None or tgt is None or not cur or not tgt:
+    stable-semver (``latest``, branch refs, date tags), returns
+    False — don't force-block what we can't reason about."""
+    from core.upstream_latest._version_filter import (
+        parse_stable_with_variant,
+    )
+    cur = parse_stable_with_variant(current)
+    tgt = parse_stable_with_variant(target)
+    if cur is None or tgt is None:
         return False
-    return cur[0] != tgt[0]
+    cur_tuple, _ = cur
+    tgt_tuple, _ = tgt
+    if not cur_tuple or not tgt_tuple:
+        return False
+    if cur_tuple[0] != tgt_tuple[0]:
+        return True
+    # Both same major. Pre-1.0 special case: when major is 0 on
+    # both sides, compare minors instead — see docstring.
+    if cur_tuple[0] == 0:
+        cur_minor = cur_tuple[1] if len(cur_tuple) > 1 else 0
+        tgt_minor = tgt_tuple[1] if len(tgt_tuple) > 1 else 0
+        return cur_minor != tgt_minor
+    return False
 
 
 def _same_major_pin(current: str, target: str) -> bool:

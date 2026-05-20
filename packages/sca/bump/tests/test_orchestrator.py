@@ -1814,3 +1814,105 @@ class TestBinaryCapabilityDeltaWiring:
         # fetch (and before resolving target).
         assert fetch_count["n"] == 0
         assert result.bump_supply_chain_findings == []
+
+
+# ---------------------------------------------------------------------------
+# _is_major_bump — variant suffixes + pre-1.0 minor convention
+# ---------------------------------------------------------------------------
+
+class TestIsMajorBump:
+    """The ``block_on_major`` policy threshold reads
+    :func:`_is_major_bump`. Two latent defects in earlier
+    versions were surfaced 2026-05-20 against raptor's own
+    self-bump simulation:
+
+      * Bug A — variant-suffix Docker tags (``11-jdk``,
+        ``3.9-slim``, ``18-alpine``) failed to parse via the
+        bare-semver-only ``parse_stable``; the function defensively
+        returned False, silently bypassing ``block_on_major: true``
+        for every Docker FROM/yaml-image with a variant tag (most
+        of them).
+
+      * Bug B — pre-1.0 software (``openai 0.84 → 0.103``) was
+        treated as same-major (``0 == 0``), even though npm /
+        Cargo / Composer all default-cap at the minor for ``0.y.z``
+        ranges. 19-minor jumps in pre-1.0 SDKs are almost-always
+        breaking and now match operator intent for
+        ``block_on_major: true``.
+    """
+
+    # --- Bug A: variant-suffix tags ---
+
+    def test_jdk_variant_different_major_is_major_bump(self):
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("11-jdk", "26-jdk") is True
+
+    def test_alpine_variant_different_major_is_major_bump(self):
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("18-alpine", "20.19.2-alpine") is True
+
+    def test_slim_variant_same_major_is_not_major_bump(self):
+        """``python:3.9-slim → 3.14.5-slim`` shares major 3 — same-major.
+        The 5-minor jump is a separate concern (operationally large,
+        but not "major" by the version-number axis)."""
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("3.9-slim", "3.14.5-slim") is False
+
+    def test_slim_variant_same_major_minor_is_not_major_bump(self):
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("3.9-slim", "3.9.1-slim") is False
+
+    # --- Bug A regression: bare semver paths still work ---
+
+    def test_v_prefix_different_major_is_major_bump(self):
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("v4", "v7.0.1") is True
+
+    def test_v_prefix_same_major_is_not_major_bump(self):
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("v6.6.5", "v6.7.0") is False
+
+    def test_bare_semver_same_major_is_not_major_bump(self):
+        """CODEQL_VERSION 2.15.5 → 2.25.4 — 10 minors but same major."""
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("2.15.5", "2.25.4") is False
+
+    # --- Bug B: pre-1.0 minor-as-major ---
+
+    def test_pre_1_0_minor_bump_is_major_bump(self):
+        """Per npm / Cargo / Composer convention and semver §4
+        ("anything MAY change"), ``0.21 → 0.24`` is breaking-equivalent."""
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("0.21.0", "0.24.0") is True
+
+    def test_pre_1_0_big_minor_bump_is_major_bump(self):
+        """``openai 0.84 → 0.103`` — 19 minors of pre-1.0 SDK churn."""
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("0.84.0", "0.103.1") is True
+
+    def test_pre_1_0_patch_within_same_minor_is_not_major_bump(self):
+        """``0.21.0 → 0.21.5`` — same minor, just a patch."""
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("0.21.0", "0.21.5") is False
+
+    def test_pre_1_0_zero_minor_to_first_minor_is_major_bump(self):
+        """``0.0.1 → 0.1.0`` — first real minor release, breaking-equivalent."""
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("0.0.1", "0.1.0") is True
+
+    def test_pre_1_0_zero_minor_patches_not_major_bump(self):
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("0.0.1", "0.0.5") is False
+
+    # --- Conservative-on-unparseable ---
+
+    def test_unparseable_current_returns_false(self):
+        """``latest`` and branch refs aren't stable-semver — caller
+        chose a non-comparable tag, function bails False instead of
+        synthesising a verdict it can't justify."""
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("latest", "v1.0") is False
+
+    def test_unparseable_target_returns_false(self):
+        from packages.sca.bump.orchestrator import _is_major_bump
+        assert _is_major_bump("v1.0", "main") is False
