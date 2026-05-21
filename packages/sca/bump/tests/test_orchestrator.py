@@ -1921,3 +1921,62 @@ class TestIsMajorBump:
     def test_unparseable_target_returns_false(self):
         from packages.sca.bump.orchestrator import _is_major_bump
         assert _is_major_bump("v1.0", "main") is False
+
+
+# ---------------------------------------------------------------------------
+# _is_minor_skew_bump — operationally-large same-major jumps
+# ---------------------------------------------------------------------------
+
+class TestIsMinorSkewBump:
+    """``block_on_minor_skew`` reads :func:`_is_minor_skew_bump`.
+
+    Motivation: ``python 3.9 → 3.14.5`` is a 5-minor jump within
+    major 3. Strict semver labels it "same major" so
+    ``_is_major_bump`` returns False, but each Python minor removes
+    APIs — operationally, 5 minors of Python is a big jump. This
+    gate gives operators an opt-in way to block on that
+    same-major-but-still-big-jump pattern."""
+
+    def test_python_5_minor_jump_at_threshold_5_is_skew(self):
+        from packages.sca.bump.orchestrator import _is_minor_skew_bump
+        assert _is_minor_skew_bump("3.9-slim", "3.14.5-slim",
+                                    threshold=5) is True
+
+    def test_python_5_minor_jump_at_threshold_6_is_not_skew(self):
+        from packages.sca.bump.orchestrator import _is_minor_skew_bump
+        assert _is_minor_skew_bump("3.9-slim", "3.14.5-slim",
+                                    threshold=6) is False
+
+    def test_patch_only_is_not_skew(self):
+        from packages.sca.bump.orchestrator import _is_minor_skew_bump
+        assert _is_minor_skew_bump("3.9.1", "3.9.5", threshold=2) is False
+
+    def test_codeql_10_minor_jump_at_threshold_5_is_skew(self):
+        """``CODEQL_VERSION 2.15.5 → 2.25.4`` — same major, 10-minor."""
+        from packages.sca.bump.orchestrator import _is_minor_skew_bump
+        assert _is_minor_skew_bump("2.15.5", "2.25.4",
+                                    threshold=5) is True
+
+    def test_different_major_is_not_skew(self):
+        """Different majors are ``_is_major_bump``'s territory; this
+        gate explicitly skips them so the verdict isn't compounded."""
+        from packages.sca.bump.orchestrator import _is_minor_skew_bump
+        assert _is_minor_skew_bump("11-jdk", "26-jdk",
+                                    threshold=5) is False
+
+    def test_pre_1_0_is_not_skew(self):
+        """Pre-1.0 belongs to ``_is_major_bump``'s zero-major rule;
+        this gate skips it so we don't double-count."""
+        from packages.sca.bump.orchestrator import _is_minor_skew_bump
+        assert _is_minor_skew_bump("0.84.0", "0.103.1",
+                                    threshold=5) is False
+
+    def test_downgrade_is_not_skew(self):
+        """Downgrades (target.minor < current.minor) don't count as a
+        skew bump in the forward direction."""
+        from packages.sca.bump.orchestrator import _is_minor_skew_bump
+        assert _is_minor_skew_bump("3.14.5", "3.9", threshold=2) is False
+
+    def test_unparseable_returns_false(self):
+        from packages.sca.bump.orchestrator import _is_minor_skew_bump
+        assert _is_minor_skew_bump("latest", "3.14", threshold=2) is False

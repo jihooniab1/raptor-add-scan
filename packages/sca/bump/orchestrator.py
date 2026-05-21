@@ -224,6 +224,18 @@ def run_bump(
                 and result.verdict != _VERDICT_BLOCK):
             result.verdict = _VERDICT_BLOCK
             result.verdict_label = _VERDICT_LABEL[_VERDICT_BLOCK]
+        # Policy override: ``block_on_minor_skew`` forces same-major
+        # large-minor-jump bumps to Block. Catches the
+        # ``python 3.9 → 3.14.5``-class of operationally large
+        # bumps that semver labels "same major".
+        if (policy.thresholds.block_on_minor_skew > 0
+                and _is_minor_skew_bump(
+                    cand.current_version, cand.target_version,
+                    threshold=policy.thresholds.block_on_minor_skew,
+                )
+                and result.verdict != _VERDICT_BLOCK):
+            result.verdict = _VERDICT_BLOCK
+            result.verdict_label = _VERDICT_LABEL[_VERDICT_BLOCK]
         if apply and result.verdict == _VERDICT_CLEAN:
             if cand.kind == "git_submodule":
                 # Submodule SHAs live in git's object database,
@@ -1458,6 +1470,46 @@ def _is_major_bump(current: str, target: str) -> bool:
         tgt_minor = tgt_tuple[1] if len(tgt_tuple) > 1 else 0
         return cur_minor != tgt_minor
     return False
+
+
+def _is_minor_skew_bump(
+    current: str, target: str, *, threshold: int,
+) -> bool:
+    """True if ``target`` is a same-major bump with a minor-version
+    delta ≥ ``threshold``. Used by the ``block_on_minor_skew``
+    policy threshold to catch operationally-large jumps that strict
+    semver labels "same major" (``python 3.9 → 3.14.5`` is a
+    5-minor jump within major 3).
+
+    Returns False when:
+      * Either version can't be parsed as stable-semver
+        (``latest``, branch refs).
+      * The majors differ — that's ``_is_major_bump``'s job.
+      * Either side is pre-1.0 — handled by ``_is_major_bump``'s
+        zero-major rule, where every 0.x → 0.y is already
+        major-equivalent.
+      * Target's minor is not strictly greater than current's (a
+        same-major downgrade or zero-skew rewrite).
+    """
+    from core.upstream_latest._version_filter import (
+        parse_stable_with_variant,
+    )
+    cur = parse_stable_with_variant(current)
+    tgt = parse_stable_with_variant(target)
+    if cur is None or tgt is None:
+        return False
+    cur_tuple, _ = cur
+    tgt_tuple, _ = tgt
+    if not cur_tuple or not tgt_tuple:
+        return False
+    if cur_tuple[0] != tgt_tuple[0]:
+        return False
+    if cur_tuple[0] == 0:
+        # Pre-1.0 belongs to ``_is_major_bump``'s zero-major rule.
+        return False
+    cur_minor = cur_tuple[1] if len(cur_tuple) > 1 else 0
+    tgt_minor = tgt_tuple[1] if len(tgt_tuple) > 1 else 0
+    return (tgt_minor - cur_minor) >= threshold
 
 
 def _same_major_pin(current: str, target: str) -> bool:

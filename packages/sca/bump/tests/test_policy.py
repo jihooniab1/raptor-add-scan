@@ -302,3 +302,35 @@ def test_load_binary_capability_delta_truthy_non_bool_stays_off(
     )
     policy = load_policy(tmp_path)
     assert policy.binary_capability_delta_enabled is False
+
+
+def test_block_on_minor_skew_default_disabled() -> None:
+    """0 is the documented "disabled" default — gate stays off
+    unless operator opts in."""
+    assert BumpPolicy().thresholds.block_on_minor_skew == 0
+
+
+def test_block_on_minor_skew_loaded_from_yaml(tmp_path: Path) -> None:
+    _write_policy(tmp_path,
+                   "thresholds:\n  block_on_minor_skew: 5\n")
+    policy = load_policy(tmp_path)
+    assert policy.thresholds.block_on_minor_skew == 5
+
+
+def test_block_on_minor_skew_zero_is_explicit_off(tmp_path: Path) -> None:
+    """``0`` is the documented disabled value — accept it
+    explicitly so an operator can override a higher default
+    back to off."""
+    _write_policy(tmp_path,
+                   "thresholds:\n  block_on_minor_skew: 0\n")
+    policy = load_policy(tmp_path)
+    assert policy.thresholds.block_on_minor_skew == 0
+
+
+def test_block_on_minor_skew_negative_ignored(tmp_path: Path) -> None:
+    """Negative skew would mean "block on downgrade" which is
+    nonsensical — ignore and keep the default."""
+    _write_policy(tmp_path,
+                   "thresholds:\n  block_on_minor_skew: -1\n")
+    policy = load_policy(tmp_path)
+    assert policy.thresholds.block_on_minor_skew == 0

@@ -71,6 +71,28 @@ class Thresholds:
 
     rapid_release_days: int = 30
     block_on_major: bool = False
+    # OFF by default (0): no minor-skew gate.
+    #
+    # When > 0: force-Block any same-major bump whose target.minor
+    # exceeds current.minor by ``block_on_minor_skew`` or more.
+    # Catches the ``python 3.9 → 3.14.5``-class of bump where the
+    # change is "same major" by strict semver but operationally
+    # large (5 minor versions of Python = significant removed APIs).
+    #
+    # ``_is_major_bump`` already covers different-major + pre-1.0
+    # minor jumps; this threshold catches the gap between "same
+    # major" and "operationally major-equivalent".
+    #
+    # Suggested values:
+    #   * ``2`` — very conservative, blocks any 2+ minor jump
+    #   * ``5`` — pragmatic, blocks "big" jumps like 3.9→3.14
+    #   * ``10`` — only blocks LTS-skipping-LTS-class jumps
+    #
+    # Only applies when ``current`` and ``target`` are both
+    # parseable as semver with major ≥ 1 (pre-1.0 is handled by
+    # ``_is_major_bump``'s zero-major rule); unparseable inputs
+    # (``latest``, branch refs) skip the gate.
+    block_on_minor_skew: int = 0
 
 
 @dataclass
@@ -166,15 +188,28 @@ def load_policy(target: Path) -> BumpPolicy:
     if isinstance(raw_th, dict):
         rrd = raw_th.get("rapid_release_days")
         bom = raw_th.get("block_on_major")
+        bms = raw_th.get("block_on_minor_skew")
         if isinstance(rrd, int) and rrd > 0:
             th = Thresholds(
                 rapid_release_days=rrd,
                 block_on_major=th.block_on_major,
+                block_on_minor_skew=th.block_on_minor_skew,
             )
         if isinstance(bom, bool):
             th = Thresholds(
                 rapid_release_days=th.rapid_release_days,
                 block_on_major=bom,
+                block_on_minor_skew=th.block_on_minor_skew,
+            )
+        # ``block_on_minor_skew: 0`` is the documented "disabled"
+        # value; treat 0 as a valid explicit-off rather than
+        # ignoring it. Negative values are nonsensical (would
+        # block-on-downgrade) — ignore those.
+        if isinstance(bms, int) and bms >= 0:
+            th = Thresholds(
+                rapid_release_days=th.rapid_release_days,
+                block_on_major=th.block_on_major,
+                block_on_minor_skew=bms,
             )
 
     # ``binary_capability_delta`` is the top-level toggle name in
