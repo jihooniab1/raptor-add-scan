@@ -50,10 +50,24 @@ from typing import List, Optional
 
 import httpx
 
+from core.security.log_sanitisation import escape_nonprintable
+
 from .auth import CredentialStore, ProviderRule, build_rules
 
 
 _logger = logging.getLogger(__name__)
+
+
+def _scrub(value: Optional[str]) -> Optional[str]:
+    """Defang nonprintable + ANSI escapes in operator-visible
+    fields (``worker_label``, ``reason``) before they hit the
+    audit log or stdlib logger. Pre-fix a malicious model name
+    or framework-supplied label could embed control sequences
+    that corrupted terminal output / log-tail viewers — same
+    threat model as ``core/security/prompt_output_sanitise``."""
+    if value is None:
+        return None
+    return escape_nonprintable(value)
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +83,31 @@ _TOKEN_DEFAULT_BUDGET = 10_000       # requests per worker run — agentic
                                      # workflows over many findings can
                                      # easily clear 1k LLM calls.
 _TOKEN_HEADER = "X-Raptor-Token"
+
+
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    """Read an int from the environment with a default + floor.
+
+    Used to let an operator override the dispatcher TTL/budget
+    without code edits. Out-of-range or non-numeric values fall
+    back to ``default`` silently (with a debug-level log) so a
+    typo doesn't break dispatcher startup.
+    """
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        _logger.debug("llm-dispatcher: ignoring non-int %s=%r", name, raw)
+        return default
+    if value < minimum:
+        _logger.debug(
+            "llm-dispatcher: ignoring %s=%d below minimum %d",
+            name, value, minimum,
+        )
+        return default
+    return value
 
 
 @dataclass
@@ -153,13 +192,32 @@ class LLMDispatcher:
         run_id: str,
         *,
         audit_path: Optional[Path] = None,
-        token_ttl_s: int = _TOKEN_DEFAULT_TTL_S,
-        token_budget: int = _TOKEN_DEFAULT_BUDGET,
+        token_ttl_s: Optional[int] = None,
+        token_budget: Optional[int] = None,
         creds: Optional[CredentialStore] = None,
     ) -> None:
         self.run_id = run_id
-        self._token_ttl_s = token_ttl_s
-        self._token_budget = token_budget
+        # TTL/budget resolution order: explicit caller arg →
+        # ``RAPTOR_LLM_DISPATCHER_TOKEN_TTL_S`` / ``..._BUDGET`` env →
+        # module default. Operators on long kernel-scale runs can
+        # bump TTL without code edits; tests can pass a tiny value
+        # via the call site.
+        self._token_ttl_s = (
+            token_ttl_s
+            if token_ttl_s is not None
+            else _env_int(
+                "RAPTOR_LLM_DISPATCHER_TOKEN_TTL_S",
+                _TOKEN_DEFAULT_TTL_S,
+            )
+        )
+        self._token_budget = (
+            token_budget
+            if token_budget is not None
+            else _env_int(
+                "RAPTOR_LLM_DISPATCHER_TOKEN_BUDGET",
+                _TOKEN_DEFAULT_BUDGET,
+            )
+        )
 
         self._creds = creds or CredentialStore()
         self._rules: dict[str, ProviderRule] = build_rules(self._creds)
@@ -374,12 +432,18 @@ class LLMDispatcher:
     # ---- internal ----
 
     def _audit(self, ev: AuditEvent) -> None:
+        # Defang nonprintable / ANSI escapes on operator-visible
+        # fields. ``token_id`` is already a hex prefix (12 chars)
+        # so it doesn't need scrubbing, and ``event`` / ``status``
+        # are internally produced strings.
+        safe_worker = _scrub(ev.worker_label)
+        safe_reason = _scrub(ev.reason)
         # Always log via stdlib logger for terminal visibility.
         _logger.info(
             "llm-dispatcher %s %s pid=%s uid=%s token=%s label=%s%s",
             ev.event, ev.status, ev.peer_pid, ev.peer_uid,
-            ev.token_id or "-", ev.worker_label or "-",
-            f" reason={ev.reason}" if ev.reason else "",
+            ev.token_id or "-", safe_worker or "-",
+            f" reason={safe_reason}" if safe_reason else "",
         )
         if self._audit_path is None:
             return
@@ -401,14 +465,28 @@ class LLMDispatcher:
                         "peer_pid": ev.peer_pid,
                         "peer_uid": ev.peer_uid,
                         "token_id": ev.token_id,
-                        "worker_label": ev.worker_label,
+                        "worker_label": safe_worker,
                         "status": ev.status,
-                        "reason": ev.reason,
+                        "reason": safe_reason,
                         **ev.extra,
                     }) + "\n")
-            except OSError:
-                # Audit failures must not break the dispatcher.
-                pass
+            except OSError as e:
+                # Audit failures must NEVER break the dispatcher (an
+                # out-of-disk shouldn't crash an in-flight LLM
+                # session). But silent swallow hid an entire
+                # production incident: the audit log path was
+                # unwritable for the whole run, every event was
+                # dropped, and the operator only found out when
+                # /project status reported empty audit metrics.
+                # Surface ONCE via stdlib logger at WARNING — the
+                # ``_audit_warned`` flag stops the per-event flood.
+                if not getattr(self, "_audit_warned", False):
+                    _logger.warning(
+                        "llm-dispatcher: audit log write failed for %s "
+                        "(further failures will be silent): %s",
+                        self._audit_path, e,
+                    )
+                    self._audit_warned = True
 
     def _validate_token(self, raw: str | None) -> tuple[Optional[_TokenRecord], Optional[str]]:
         """L3 + L4 — return (record, None) on success, (None, reason)
