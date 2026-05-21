@@ -218,6 +218,25 @@ def compose_proxy_hosts(target: "Optional[Path]" = None) -> list:
             "sca: failed to derive image-source registry hosts for "
             "proxy allowlist", exc_info=True,
         )
+    # Helm chart repositories declared in ``Chart.yaml``
+    # ``dependencies[*].repository`` — needed by ``raptor-sca bump``
+    # so the underlying ``<repo>/index.yaml`` fetch isn't refused
+    # at the egress proxy. Without this, every bump candidate
+    # pointing at a non-static-allowlist Helm repo (bitnami /
+    # ingress-nginx / argoproj / etc.) is skipped with
+    # "host not on the allowlist".
+    try:
+        from .parsers.helm_chart import chart_repository_hosts
+        for h in chart_repository_hosts(target):
+            if h not in seen:
+                hosts.append(h)
+                seen.add(h)
+    except Exception:                               # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "sca: failed to derive Helm chart repository hosts "
+            "for proxy allowlist", exc_info=True,
+        )
     return hosts
 
 

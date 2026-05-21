@@ -138,5 +138,5 @@ class TestReviewInstallHooks:
             severity="medium",
             confidence=Confidence(level="medium"),
         )
-        result = review_install_hooks(object(), [finding])
+        review_install_hooks(object(), [finding])
         assert "llm_verdict" not in finding.evidence

@@ -18,6 +18,7 @@ from packages.sca.models import Confidence, Dependency, PinStyle
 from packages.sca.osv import (
     OSV_VULN_URL_TEMPLATE,
     OsvClient,
+    _oss_fuzz_candidates,
     parse_osv_record,
 )
 
@@ -271,9 +272,6 @@ def test_malformed_querybatch_response_treated_as_no_vuln(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 # OSS-Fuzz fallback for C/C++ deps
 # ---------------------------------------------------------------------------
-
-
-from packages.sca.osv import _oss_fuzz_candidates
 
 
 def test_osssfuzz_candidates_for_vcpkg():

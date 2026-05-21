@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from packages.sca.harden import _plan_one
+from packages.sca.harden import HardenCandidate, _plan_one
 from packages.sca.models import (
     Advisory,
     Confidence,
@@ -349,8 +349,7 @@ def test_degraded_with_major_crossing_still_review_required() -> None:
 # --check actionable counter
 # ---------------------------------------------------------------------------
 
-def _candidate(status: str) -> "HardenCandidate":
-    from packages.sca.harden import HardenCandidate
+def _candidate(status: str) -> HardenCandidate:
     return HardenCandidate(
         ecosystem="PyPI", name="x", manifest="/x/req.txt",
         pin_style="range", from_version="1.0", to_version="2.0",

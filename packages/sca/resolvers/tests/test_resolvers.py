@@ -378,27 +378,11 @@ def test_go_tidy_success(monkeypatch, tmp_path: Path) -> None:
 
     fake_sum = b"github.com/foo/bar v1.0.0 h1:abc\n"
 
-    def go_tidy_writes_sum(cmd):
-        if cmd[:3] == ["go", "mod", "tidy"]:
-            # ``cwd`` is a tempdir — write the sum file there.
-            # Pull cwd from kwargs; subprocess.run was passed cwd=tmp.
-            # Our fake doesn't track that — write to all tempdirs we
-            # can find. Simpler: monkey-patch run to also create the
-            # file in the cwd kwarg.
-            return True
-        return False
-
-    # Capture cwd from the subprocess call.
-    captured = {}
-    real_patch = _patch_run(monkeypatch, [
-        (lambda c: c == ["go", "version"],
-         _FakeProc(returncode=0, stdout="go version go1.22")),
-        (go_tidy_writes_sum, _FakeProc(returncode=0, stdout="ok")),
-    ])
-
-    # We need cwd to actually receive the sum file — patch deeper.
-    orig_run = subprocess.run
-
+    # We monkey-patch ``subprocess.run`` directly (rather than via
+    # the shared ``_patch_run`` helper) because the simulated
+    # ``go mod tidy`` needs to write ``go.sum`` into the resolver's
+    # cwd, and that path needs access to the ``cwd=`` kwarg —
+    # which the simpler matcher-only helper doesn't expose.
     def smart_run(cmd, **kwargs):
         cwd = kwargs.get("cwd")
         for matcher, result in [

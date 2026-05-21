@@ -19,7 +19,7 @@ import pytest
 # operator-readable output relies on the loader returning entries).
 yaml = pytest.importorskip("yaml")  # noqa: F841
 
-from packages.sca import suppress_cli
+from packages.sca import suppress_cli  # noqa: E402
 
 
 def _write_yaml(path: Path, entries: List[Dict[str, Any]]) -> None:

@@ -448,13 +448,10 @@ def test_ndcg_distinguishes_orderings_when_precision_ties():
     over top-20 (all 20 exploited). NDCG must rank A higher
     because it's a strictly-better-ordered top-20."""
     from packages.sca.calibration.refit import _ndcg_at_n
-    # All 20 exploited, ordered with one "extra-confident" at top vs bottom.
-    rescored_a = [(100.0 - i, 1) for i in range(20)]   # all exploited
-    rescored_b = list(rescored_a)
-    # Both have precision 1.0 — but reorder shouldn't matter since
-    # both have 20/20 exploited. NDCG should equal 1.0 in both cases.
-    # The DIFFERENTIATING case is when only N < 20 of top-20 are
-    # exploited but at different ranks.
+    # Both equally-ordered top-20s have precision 1.0 — but reorder
+    # shouldn't matter since both have 20/20 exploited. NDCG should
+    # equal 1.0 in both cases. The DIFFERENTIATING case is when only
+    # N < 20 of top-20 are exploited but at different ranks.
     rescored_c = [(100.0 - i, 1) for i in range(10)] + \
                   [(90.0 - i, 0) for i in range(10)]   # 10 exploited at top
     rescored_d = [(100.0 - i, 0) for i in range(10)] + \

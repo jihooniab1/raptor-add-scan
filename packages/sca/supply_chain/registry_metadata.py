@@ -26,6 +26,7 @@ dormant is ``high``.
 from __future__ import annotations
 
 import logging
+import threading as _threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -180,7 +181,6 @@ class _Meta:
 # duplicate parses from a check-then-set race are rare and
 # harmless (whichever thread wins the store overwrites with an
 # identical value).
-import threading as _threading
 _META_CACHE: Dict[tuple, Optional["_Meta"]] = {}
 _META_CACHE_LOCK = _threading.Lock()
 _META_CACHE_SENTINEL = object()
@@ -361,7 +361,6 @@ def _from_npm(raw: dict) -> _Meta:
     version_entries.sort(key=lambda x: x[0])
     first_pub = version_entries[0][0] if version_entries else None
     latest_pub = version_entries[-1][0] if version_entries else None
-    latest_ver = version_entries[-1][1] if version_entries else None
     second_latest_pub = (version_entries[-2][0]
                          if len(version_entries) >= 2 else None)
     second_latest_ver = (version_entries[-2][1]

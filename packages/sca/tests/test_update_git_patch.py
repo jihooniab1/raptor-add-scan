@@ -149,7 +149,6 @@ def test_git_apply_actually_applies(tmp_path: Path) -> None:
 
 def test_git_patch_skipped_when_no_changes_applied(tmp_path: Path) -> None:
     """No applied changes (every plan got skipped) → no upgrade.patch."""
-    pkg = tmp_path / "package.json"
     # The dep uses a property reference (Maven case), which the
     # rewriter skips. Use a Maven manifest to force a skipped plan.
     pom = tmp_path / "pom.xml"

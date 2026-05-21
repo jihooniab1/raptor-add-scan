@@ -42,12 +42,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Set
 
+from .._test_paths import is_test_path as _shared_is_test_path
+from ..discovery import EXCLUDED_DIR_NAMES
 from ..models import Confidence, Dependency, Manifest, PinStyle
 
 logger = logging.getLogger(__name__)
 
-
-from ..discovery import EXCLUDED_DIR_NAMES
 
 # Canonical skip set + this walker's extras. Drift-free: a new entry
 # in discovery.EXCLUDED_DIR_NAMES propagates to every walker.
@@ -84,7 +84,7 @@ _EXCLUDED_DIRS: Set[str] = (
 
 # Test-path detection shared with reachability + other supply_chain
 # detectors via packages.sca._test_paths — one source of truth.
-from .._test_paths import is_test_path as _shared_is_test_path
+# (Imported above at module top to satisfy E402.)
 
 # Top-level module names whose function calls at import time we
 # consider suspicious. Paired with the call vocabulary below.

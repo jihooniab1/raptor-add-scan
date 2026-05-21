@@ -360,8 +360,12 @@ def _classify_version_spec(spec: Optional[str]) -> Tuple[PinStyle, Optional[str]
     if m:
         lb, lv, uv, ub = m.group(1), m.group(2), m.group(3), m.group(4)
         if uv is None:
-            # ``[1.2.3]`` form — single value.
-            if lv:
+            # Single-value form. Only ``[V]`` (both inclusive) is a
+            # valid EXACT pin per NuGet spec; ``(V)`` / ``[V)`` /
+            # ``(V]`` are pathological (empty interval) — surface
+            # UNKNOWN so the planner doesn't treat them as exact
+            # matches.
+            if lv and lb == "[" and ub == "]":
                 return PinStyle.EXACT, lv
             return PinStyle.UNKNOWN, None
         # Range form. Pick the lower bound's bare version when present;

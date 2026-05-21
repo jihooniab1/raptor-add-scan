@@ -137,7 +137,7 @@ dependencies:
 
 def test_discovery_finds_chart_yaml(tmp_path):
     from packages.sca.discovery import find_manifests
-    p = _write(tmp_path, """\
+    _write(tmp_path, """\
 apiVersion: v2
 name: x
 version: 1.0
@@ -150,3 +150,86 @@ dependencies:
     chart = [m for m in manifests if m.path.name == "Chart.yaml"]
     assert len(chart) == 1
     assert chart[0].ecosystem == "Helm"
+
+
+# ---------------------------------------------------------------------------
+# chart_repository_hosts — proxy-allowlist helper
+# ---------------------------------------------------------------------------
+
+
+def _write_chart(dir_path: Path, content: str) -> None:
+    dir_path.mkdir(parents=True, exist_ok=True)
+    (dir_path / "Chart.yaml").write_text(content)
+
+
+def test_chart_repository_hosts_extracts_https_only(tmp_path: Path):
+    """HTTPS Helm repos contribute their hostname; OCI repos are
+    skipped (they route through the OCI client's existing host
+    discovery in ``image_source_registry_hosts``)."""
+    from packages.sca.parsers.helm_chart import chart_repository_hosts
+
+    _write_chart(tmp_path / "a", """\
+apiVersion: v2
+name: a
+version: 1.0
+dependencies:
+  - name: postgresql
+    version: 13.4.2
+    repository: https://charts.bitnami.com/bitnami
+  - name: redis
+    version: 18.0.0
+    repository: oci://registry-1.docker.io/bitnamicharts
+""")
+    _write_chart(tmp_path / "b", """\
+apiVersion: v2
+name: b
+version: 1.0
+dependencies:
+  - name: ingress-nginx
+    version: 4.9.0
+    repository: https://kubernetes.github.io/ingress-nginx
+""")
+    hosts = chart_repository_hosts(tmp_path)
+    assert hosts == [
+        "charts.bitnami.com",
+        "kubernetes.github.io",
+    ]
+
+
+def test_chart_repository_hosts_handles_malformed(tmp_path: Path):
+    """A malformed Chart.yaml is skipped silently — other charts
+    in the tree still contribute their hosts."""
+    from packages.sca.parsers.helm_chart import chart_repository_hosts
+
+    _write_chart(tmp_path / "bad",
+                  "not: [valid: yaml:\n  - unbalanced")
+    _write_chart(tmp_path / "good", """\
+apiVersion: v2
+name: g
+version: 1.0
+dependencies:
+  - name: x
+    version: 1.0.0
+    repository: https://example.com
+""")
+    assert chart_repository_hosts(tmp_path) == ["example.com"]
+
+
+def test_chart_repository_hosts_empty_tree(tmp_path: Path):
+    """No Chart.yaml under target → empty list (not a crash)."""
+    from packages.sca.parsers.helm_chart import chart_repository_hosts
+
+    assert chart_repository_hosts(tmp_path) == []
+
+
+def test_chart_repository_hosts_no_dependencies_field(tmp_path: Path):
+    """A Chart.yaml without a ``dependencies:`` array is the
+    library / single-chart shape — no repos to add."""
+    from packages.sca.parsers.helm_chart import chart_repository_hosts
+
+    _write(tmp_path, """\
+apiVersion: v2
+name: solo
+version: 1.0
+""")
+    assert chart_repository_hosts(tmp_path) == []

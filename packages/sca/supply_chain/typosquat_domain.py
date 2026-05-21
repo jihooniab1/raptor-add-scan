@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
+from .._test_paths import TEST_DIR_NAMES as _SHARED_TEST_DIR_NAMES
+from ..discovery import EXCLUDED_DIR_NAMES
 from ..models import Confidence, Dependency, Manifest
 
 logger = logging.getLogger(__name__)
@@ -56,15 +58,13 @@ _URL_RE = re.compile(
 )
 
 # Test-path detection is delegated to the shared ``_test_paths``
-# module so this detector picks up Go / Ruby / Java / Rust / C# /
-# PHP test-file naming conventions, not just dir-name conventions.
-# The local set below was retained as a backstop for the
-# ``fixtures`` dir name that isn't in the shared TEST_DIR_NAMES.
-from .._test_paths import TEST_DIR_NAMES as _SHARED_TEST_DIR_NAMES
+# module (imported above) so this detector picks up Go / Ruby /
+# Java / Rust / C# / PHP test-file naming conventions, not just
+# dir-name conventions. The local set below was retained as a
+# backstop for the ``fixtures`` dir name that isn't in the shared
+# TEST_DIR_NAMES.
 _LOCAL_FIXTURE_DIRS = {"specs", "fixtures"}
 _TEST_DIR_NAMES = _SHARED_TEST_DIR_NAMES | _LOCAL_FIXTURE_DIRS
-
-from ..discovery import EXCLUDED_DIR_NAMES
 
 # Canonical skip set — drift-free with discovery.EXCLUDED_DIR_NAMES.
 _SKIP_DIRS = EXCLUDED_DIR_NAMES

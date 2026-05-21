@@ -23,14 +23,6 @@ emitting twice doubles operator confusion about which is canonical.
 from __future__ import annotations
 
 import json as _json
-
-from core.security.prompt_output_sanitise import sanitise_string
-
-# Cap on advisory text in CycloneDX vulnerability.description. Larger
-# than the sanitiser default (500) because Dependency-Track and other
-# consumers render the full description; matches the SARIF cap so the
-# two emitters stay in sync.
-_SBOM_DESCRIPTION_MAX_CHARS = 2000
 import logging
 import uuid
 from collections import OrderedDict
@@ -38,7 +30,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from core.security.prompt_output_sanitise import sanitise_string
+
 from .models import Advisory, Dependency, VulnFinding
+
+# Cap on advisory text in CycloneDX vulnerability.description. Larger
+# than the sanitiser default (500) because Dependency-Track and other
+# consumers render the full description; matches the SARIF cap so the
+# two emitters stay in sync.
+_SBOM_DESCRIPTION_MAX_CHARS = 2000
 
 logger = logging.getLogger(__name__)
 

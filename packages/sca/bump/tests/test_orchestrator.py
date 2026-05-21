@@ -588,7 +588,7 @@ def test_from_image_apply_writes_dockerfile(tmp_path: Path) -> None:
             {"name": "library/python",
              "tags": ["3.11", "3.12", "3.13"]},
     })
-    report = run_bump(tmp_path, http=http, apply=True)
+    run_bump(tmp_path, http=http, apply=True)
     assert "FROM python:3.13" in dockerfile.read_text()
 
 
@@ -1170,7 +1170,8 @@ def test_render_dedups_identical_candidates_across_files(
     # Filter to candidate ROWS (kind=gha_uses appears in the
     # candidate rows but also in the header — exclude header
     # by looking for the locator field directly).
-    rows = [l for l in text.splitlines() if "actions/checkout" in l]
+    rows = [line for line in text.splitlines()
+             if "actions/checkout" in line]
     assert len(rows) == 1, (
         f"expected 1 deduped row; got {len(rows)}: {rows}"
     )
@@ -1210,7 +1211,8 @@ def test_render_single_file_still_shows_filename_count(
     text = render_report(report)
     # Single-file candidate: no "(N files)" suffix (renders empty
     # Result column).
-    rows = [l for l in text.splitlines() if "actions/checkout" in l]
+    rows = [line for line in text.splitlines()
+             if "actions/checkout" in line]
     assert len(rows) == 1
     assert "(1 file)" not in rows[0]
     assert "(2 files)" not in rows[0]

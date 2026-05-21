@@ -150,3 +150,80 @@ def _classify_version(version: str) -> PinStyle:
     if version[:1].isdigit():
         return PinStyle.EXACT
     return PinStyle.UNKNOWN
+
+
+def chart_repository_hosts(target: Path) -> List[str]:
+    """Return the union of Helm-repo hostnames referenced by every
+    ``Chart.yaml`` under ``target``.
+
+    Companion to :func:`packages.sca.dockerfile_from.
+    image_source_registry_hosts` for the sandbox proxy allowlist —
+    without this, ``raptor-sca bump`` walks ``Chart.yaml``
+    dependencies but the underlying Helm-index fetch
+    (``<repository>/index.yaml``) fails at the egress proxy with
+    "host not on allowlist" for any repo that isn't in the static
+    :data:`packages.sca.SCA_ALLOWED_HOSTS` set. The static set
+    intentionally covers only OSV / KEV / EPSS / package-registry
+    metadata hosts; Helm repos are project-specific and have to be
+    derived from the target tree.
+
+    Parsing is best-effort: a malformed ``Chart.yaml`` logs a
+    debug line and is skipped, never aborts the walk. Empty list
+    is a valid result (no charts in the target, no
+    ``repository:`` fields, all repositories are ``oci://`` style
+    — those route through the OCI client's existing allowlist).
+
+    Output is deduplicated and sorted for deterministic
+    allowlist composition.
+    """
+    from urllib.parse import urlparse
+
+    found: set = set()
+    for path in target.rglob("Chart.yaml"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            logger.debug(
+                "sca.parsers.helm_chart: read failed for %s during "
+                "host extraction: %s", path, e,
+            )
+            continue
+        try:
+            import yaml             # type: ignore[import-untyped]
+            from .._yaml_fast import safe_load
+        except ImportError:
+            return []
+        try:
+            data = safe_load(text)
+        except yaml.YAMLError as e:
+            logger.debug(
+                "sca.parsers.helm_chart: YAML parse failed for %s "
+                "during host extraction: %s", path, e,
+            )
+            continue
+        if not isinstance(data, dict):
+            continue
+        deps_raw = data.get("dependencies") or []
+        if not isinstance(deps_raw, list):
+            continue
+        for entry in deps_raw:
+            if not isinstance(entry, dict):
+                continue
+            repo = entry.get("repository")
+            if not isinstance(repo, str) or not repo.strip():
+                continue
+            repo = repo.strip()
+            # ``oci://`` repositories route through the OCI
+            # client's host allowlist (already covered by
+            # ``image_source_registry_hosts``-style logic in
+            # ``compose_proxy_hosts``); HTTP/HTTPS need their
+            # hostname added here for the index.yaml fetch.
+            if repo.startswith("oci://"):
+                continue
+            try:
+                host = urlparse(repo).hostname
+            except ValueError:
+                continue
+            if host:
+                found.add(host)
+    return sorted(found)

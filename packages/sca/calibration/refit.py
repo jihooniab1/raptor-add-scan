@@ -194,7 +194,7 @@ def grid_search_refit(
     if ecosystem_filter is not None:
         before = len(samples)
         samples = [
-            (f, l) for f, l in samples
+            (f, label) for f, label in samples
             if (f.get("ecosystem") or "?") == ecosystem_filter
         ]
         notes.append(
@@ -550,7 +550,7 @@ def _search_metric(
         return (0.0, 0.0)
     rescored.sort(key=lambda t: -t[0])
     top20 = rescored[:20]
-    p20 = (sum(l for _, l in top20) / len(top20)) if top20 else 0.0
+    p20 = (sum(label for _, label in top20) / len(top20)) if top20 else 0.0
     ndcg20 = _ndcg_at_n(rescored, n=20)
     return (p20, ndcg20)
 

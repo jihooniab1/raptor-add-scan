@@ -228,16 +228,27 @@ def _split_compound(line: str) -> List[str]:
         ch = line[i]
         if ch == "'" and not in_double:
             in_single = not in_single
-            buf.append(ch); i += 1; continue
+            buf.append(ch)
+            i += 1
+            continue
         if ch == '"' and not in_single:
             in_double = not in_double
-            buf.append(ch); i += 1; continue
+            buf.append(ch)
+            i += 1
+            continue
         if not in_single and not in_double:
             if line[i:i+2] in ("&&", "||"):
-                out.append("".join(buf)); buf = []; i += 2; continue
+                out.append("".join(buf))
+                buf = []
+                i += 2
+                continue
             if ch == ";":
-                out.append("".join(buf)); buf = []; i += 1; continue
-        buf.append(ch); i += 1
+                out.append("".join(buf))
+                buf = []
+                i += 1
+                continue
+        buf.append(ch)
+        i += 1
     if buf:
         out.append("".join(buf))
     return [s.strip() for s in out if s.strip()]
@@ -355,7 +366,6 @@ def _extract_apt_via_core_dockerfile(
     falls back to ``scope="main"`` (the legacy default).
     """
     from core.dockerfile import (
-        AptPackage,
         extract_apt_packages,
         parse_dockerfile as core_parse_dockerfile,
     )
@@ -773,4 +783,28 @@ __all__ = [
     "parse_devcontainer_json",
     "parse_shell_script",
     "parse_gha_workflow",
+    # Re-exports kept for the back-compat import path
+    # ``from packages.sca.parsers.inline_installs import _parse_apt_args``;
+    # used internally by tests and by older external callers. Listing
+    # them in ``__all__`` is the canonical "yes this is intentional"
+    # signal to ruff F401 and to import-star semantics.
+    "_MANAGERS",
+    "_NAME_RE",
+    "_PkgManager",
+    "_classify_pip_token",
+    "_emit_npm_pkg",
+    "_legacy_single_spec",
+    "_parse_apk_args",
+    "_parse_apt_args",
+    "_parse_brew_args",
+    "_parse_cargo_args",
+    "_parse_gem_args",
+    "_parse_go_install_args",
+    "_parse_npm_args",
+    "_parse_npx_args",
+    "_parse_pip_args",
+    "_parse_versioned_flag_args",
+    "_parse_yum_args",
+    "_split_npm_token",
+    "_tokenise",
 ]

@@ -192,6 +192,8 @@ def _build_dep(
     is_optional = False
     declared_features: Optional[list] = None
 
+    git_url: Optional[str] = None
+    path_ref: Optional[str] = None
     if isinstance(spec, str):
         version = spec
         pin_style, normalised = _classify_version_spec(spec)
@@ -202,10 +204,14 @@ def _build_dep(
             is_workspace_inherit = True
             pin_style = PinStyle.UNKNOWN
         elif "git" in spec:
-            git_url = spec.get("git")
+            raw_git = spec.get("git")
+            if isinstance(raw_git, str):
+                git_url = raw_git
             pin_style = PinStyle.GIT
         elif "path" in spec:
-            path_ref = spec.get("path")
+            raw_path = spec.get("path")
+            if isinstance(raw_path, str):
+                path_ref = raw_path
             pin_style = PinStyle.PATH
         else:
             v = spec.get("version")
@@ -222,13 +228,23 @@ def _build_dep(
     else:
         return None
 
+    # Carry git / path source coordinates into ``source_extra`` so
+    # downstream consumers (SBOM, finding context, reachability)
+    # know the dep's origin. Parallels the
+    # ``cargo_optional`` / ``cargo_features`` pattern already here;
+    # previously these locals were captured and dropped on the floor.
     source_extra = None
-    if is_optional or declared_features is not None:
+    if (is_optional or declared_features is not None
+            or git_url or path_ref):
         source_extra = {}
         if is_optional:
             source_extra["cargo_optional"] = True
         if declared_features is not None:
             source_extra["cargo_features"] = declared_features
+        if git_url:
+            source_extra["cargo_git"] = git_url
+        if path_ref:
+            source_extra["cargo_path"] = path_ref
 
     purl = _build_purl(name, version)
     return Dependency(

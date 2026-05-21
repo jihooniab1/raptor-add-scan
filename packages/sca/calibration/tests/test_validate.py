@@ -224,7 +224,7 @@ def test_validate_corpus_emits_report_file(tmp_path: Path) -> None:
     corpus_dir = tmp_path / "calibration"
     corpus_dir.mkdir()
     _build_synthetic_corpus(corpus_dir, scored=80)
-    report = validate_corpus(corpus_dir)
+    validate_corpus(corpus_dir)
     out_files = list((corpus_dir / "validation").iterdir())
     assert len(out_files) == 1
     on_disk = json.loads(out_files[0].read_text())

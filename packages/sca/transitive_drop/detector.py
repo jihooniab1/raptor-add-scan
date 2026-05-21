@@ -526,14 +526,28 @@ def _dep_state_composer(
     if pkg_meta is None:
         return None
 
+    # Packagist enforces lowercase canonical package names, but a
+    # `require` map written by hand can still contain mixed-case
+    # entries (``vendor/Package``). Match case-folded both sides
+    # to stay consistent with every other ecosystem detector in
+    # this module (``transitive_canon`` is built for exactly this
+    # purpose; using ``transitive_name`` directly silently misses
+    # mixed-case entries).
     transitive_canon = transitive_name.lower()
+
+    def _has(block_key: str) -> bool:
+        block = pkg_meta.get(block_key) or {}
+        if not isinstance(block, dict):
+            return False
+        return any(
+            (k or "").lower() == transitive_canon for k in block
+        )
+
     extras: List[str] = []
-    unconditional = False
-    if (pkg_meta.get("require") or {}).get(transitive_name):
-        unconditional = True
-    if (pkg_meta.get("require-dev") or {}).get(transitive_name):
+    unconditional = _has("require")
+    if _has("require-dev"):
         extras.append("require-dev")
-    if (pkg_meta.get("suggest") or {}).get(transitive_name):
+    if _has("suggest"):
         extras.append("suggest")
     return {"required": unconditional, "extras": extras}
 

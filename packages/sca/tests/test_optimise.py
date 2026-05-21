@@ -820,7 +820,9 @@ class TestPlanOutput:
         optimise._print_dry_run(vuln_plans, hygiene_plans)
         out = capsys.readouterr().out
         lines = out.splitlines()
-        manifest_lines = [l for l in lines if "requirements.txt" in l and "==" not in l]
+        manifest_lines = [line for line in lines
+                          if "requirements.txt" in line
+                          and "==" not in line]
         assert len(manifest_lines) == 2
 
     def test_major_blocked_warning(self, capsys):

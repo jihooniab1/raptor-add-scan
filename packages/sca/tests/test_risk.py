@@ -311,8 +311,6 @@ class TestCalibrationStatusFromValidation:
         validation_dir = tmp_path / "validation"
         validation_dir.mkdir()
 
-        original = risk._load_latest_validation_verdict
-
         def _patched():
             import json
             if not validation_dir.is_dir():

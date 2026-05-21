@@ -235,7 +235,6 @@ class TestCachedDryRunBatch:
         a = _make_project(tmp_path / "a", "django==3.0.6\n")
         b = _make_project(tmp_path / "b", "flask==1.1.0\n")
         c = _make_project(tmp_path / "c", "requests==2.20.0\n")
-        resolver = _FakeResolver(lockfile=b"X")
         # Pre-cache `b` only with a different lockfile so we can
         # tell which result came from where.
         class _OtherLock(_FakeResolver):

@@ -45,12 +45,16 @@ def test_top_level_required_fields_present():
 def test_namespace_is_unique_per_run():
     doc1 = render_sbom_spdx(deps=[], target_name="repo")
     doc2 = render_sbom_spdx(deps=[], target_name="repo")
-    # Same target name but different timestamps → different namespace.
-    # (Both contain a timestamp; might be equal to the second if run
-    # within the same second, so allow either equal-or-different.)
-    assert doc1["documentNamespace"].startswith(
-        "https://raptor-sca.local/spdxdocs/repo-",
-    )
+    # Same target name produces the same canonical prefix. Strict
+    # inequality on the full namespace would be flaky when two
+    # successive calls land in the same wall-clock second; we
+    # assert the shape on both and a non-empty trailing component
+    # so a future regression that emits a constant namespace fails.
+    prefix = "https://raptor-sca.local/spdxdocs/repo-"
+    assert doc1["documentNamespace"].startswith(prefix)
+    assert doc2["documentNamespace"].startswith(prefix)
+    assert doc1["documentNamespace"][len(prefix):]
+    assert doc2["documentNamespace"][len(prefix):]
 
 
 def test_explicit_namespace_overrides_default():

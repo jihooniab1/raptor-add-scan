@@ -70,8 +70,6 @@ def test_temp_file_cleaned_up_on_failure(tmp_path: Path) -> None:
     """If ``os.replace`` raises, the temp file is removed."""
     p = tmp_path / "manifest.txt"
 
-    real_replace = os.replace
-
     def _boom(src, dst, *a, **kw):
         # Simulate a rename failure. Real causes: cross-device rename,
         # destination locked on Windows.
@@ -93,8 +91,6 @@ def test_keyboard_interrupt_during_write_cleans_up(tmp_path: Path) -> None:
     scenario we're hardening against.
     """
     p = tmp_path / "manifest.txt"
-
-    real_fsync = os.fsync
 
     def _interrupt(*a, **kw):
         raise KeyboardInterrupt()

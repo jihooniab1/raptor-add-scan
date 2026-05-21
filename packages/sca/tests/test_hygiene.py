@@ -61,7 +61,8 @@ def test_lockfile_missing_silenced_when_lockfile_sibling_exists(
 ) -> None:
     pkg = tmp_path / "package.json"
     lock = tmp_path / "package-lock.json"
-    pkg.touch(); lock.touch()
+    pkg.touch()
+    lock.touch()
     deps = [_dep("lodash", path=pkg),
             _dep("lodash", path=lock, is_lockfile=True)]
     findings = evaluate(

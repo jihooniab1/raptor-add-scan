@@ -60,10 +60,14 @@ def test_unparseable_version_no_semver_signal():
     """When the version string isn't semver-shaped (e.g. PEP 440
     epoch / local version), we silently skip the semver heuristic
     rather than emitting a confused risk row."""
+    # PEP 440 local-version suffix ("+local") still has a parseable
+    # ``major.minor.patch`` prefix, so the heuristic correctly
+    # reports semver_major across that prefix. This asserts the
+    # positive case so we notice if the leading-prefix regex
+    # regresses.
     report = check_pypi_api_compat("foo", "1.0.0+local", "2.0.0+local")
-    # 1.0.0+local IS parseable by the leading regex (we only match
-    # digits.digits.digits at the start). So we DO get a semver-major
-    # risk here. Test the genuinely unparseable case:
+    assert any(r.kind == "semver_major" for r in report.risks)
+    # Genuinely unparseable shape — no risk row at all.
     report2 = check_pypi_api_compat("foo", "weird-tag", "another-weird-tag")
     assert report2.risks == []
 

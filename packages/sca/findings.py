@@ -84,7 +84,6 @@ def build_vuln_findings(
         epss: optional EPSS lookup; ``None`` skips the EPSS enrichment.
         reachability: optional per-dep-key reachability records.
     """
-    by_key = {r.dep_key: r for r in osv_results}
     out: List[VulnFinding] = []
 
     # Pre-pass: dedup advisories that are aliases of the same CVE. OSV

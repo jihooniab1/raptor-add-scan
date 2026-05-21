@@ -207,9 +207,14 @@ def _walk_one_ecosystem(
         name, version, depth = queue.pop(0)
         if depth >= max_depth:
             continue
-        key = (ecosystem, name, version)
-        # Note: visited check uses the key including version. A dep
-        # at multiple versions (rare in practice) walks each.
+        # The ``visited`` set is seeded at the caller with the
+        # direct deps (so children that re-cite a direct dep get
+        # short-circuited at child-emission time below). Don't
+        # gate parent processing on it — direct seeds ARE in
+        # visited, and skipping them here would prevent the
+        # walker from discovering any transitives. The child-
+        # emission paths below maintain the set so re-queued
+        # children are short-circuited at the source.
         cache_key = f"metadata_walk/{ecosystem}/{name}/{version}"
 
         if cache is not None:

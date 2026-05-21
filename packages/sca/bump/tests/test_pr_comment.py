@@ -176,8 +176,8 @@ def test_proposal_table_has_one_row_per_dedup_group(tmp_path: Path) -> None:
     report = run_bump(tmp_path, http=http)
     text = render_pr_comment(report)
     # ONE row in the proposal table, not two.
-    rows = [l for l in text.splitlines()
-             if "actions/checkout" in l and "|" in l]
+    rows = [line for line in text.splitlines()
+             if "actions/checkout" in line and "|" in line]
     assert len(rows) == 1
     assert "2 files" in rows[0]
 
@@ -268,6 +268,68 @@ def test_repo_label_renders_in_header(tmp_path: Path) -> None:
         report, repo_label="raptor · pr#42 · sha=abc1234",
     )
     assert "raptor · pr#42 · sha=abc1234" in text
+
+
+def test_pr_comment_skipped_section_lists_locators(tmp_path: Path) -> None:
+    """Skipped surfaces render with locator + reason so PR
+    reviewers can see exactly what wasn't bumped — counts alone
+    force operators to re-run with ``-v`` to learn what
+    happened. Long / multi-line reasons get collapsed to a
+    single line."""
+    from packages.sca.bump.orchestrator import BumpReport
+    report = BumpReport(
+        target=tmp_path,
+        candidates=[],
+        results=[],
+        skipped=[
+            (
+                "postgresql (https://charts.bitnami.com/bitnami)",
+                tmp_path / "Chart.yaml",
+                "Helm index lookup failed:\n"
+                "Helm index at https://charts.bitnami.com/bitnami "
+                "missing entries map",
+            ),
+            (
+                "actions/checkout",
+                tmp_path / ".github/workflows/ci.yml",
+                "OCI tag lookup failed: 403 Forbidden",
+            ),
+        ],
+    )
+    text = render_pr_comment(report)
+    assert "Skipped: 2 surface(s)" in text
+    assert "postgresql" in text
+    assert "Chart.yaml" in text
+    assert "actions/checkout" in text
+    assert "ci.yml" in text
+    # Newline in the reason becomes a space so the markdown list
+    # item stays valid.
+    assert "Helm index lookup failed:\nHelm index" not in text
+    assert "Helm index lookup failed: Helm index" in text
+
+
+def test_pr_comment_skipped_section_truncates_large_lists(
+    tmp_path: Path,
+) -> None:
+    """A project with hundreds of skipped surfaces would blow
+    out the PR-comment size limit — we cap at 20 and surface a
+    "+N more skipped" footer."""
+    from packages.sca.bump.orchestrator import BumpReport
+    report = BumpReport(
+        target=tmp_path,
+        candidates=[],
+        results=[],
+        skipped=[
+            (f"locator-{i}", tmp_path / "f.yml", "reason")
+            for i in range(35)
+        ],
+    )
+    text = render_pr_comment(report)
+    assert "Skipped: 35 surface(s)" in text
+    assert "locator-0" in text
+    assert "locator-19" in text
+    assert "locator-20" not in text
+    assert "+15 more skipped" in text
 
 
 def test_footer_contains_suggest_only_hint(tmp_path: Path) -> None:

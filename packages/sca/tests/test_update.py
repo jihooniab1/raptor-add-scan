@@ -104,7 +104,6 @@ def test_pom_xml_rewrite_bumps_version(tmp_path: Path) -> None:
         "--findings", str(findings), "--out", str(out), "--allow-major",
     ])
     assert rc == 0
-    rewritten = (out / "proposed" / pom.resolve().relative_to(Path.cwd().resolve()) if False else None)
     # Find the proposed file by walking the tree (path layout depends on cwd).
     found = list((out / "proposed").rglob("pom.xml"))
     assert len(found) == 1
