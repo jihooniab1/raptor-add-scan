@@ -398,6 +398,8 @@ SupplyChainKind = Literal[
     "transitive_now_optional",
     "binary_capability_delta",
     "image_capability_drift",
+    "orphan_commit_dep",
+    "payload_size_spike",
 ]
 
 

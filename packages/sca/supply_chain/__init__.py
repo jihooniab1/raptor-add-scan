@@ -50,6 +50,7 @@ from . import gha_sunset as _gha_sunset
 from . import git_drift as _git_drift
 from . import cargo_build_scripts as _cargo_build
 from . import install_hooks as _install_hooks
+from . import orphan_commit_dep as _orphan_commit_dep
 from . import python_imports as _python_imports
 from . import registry_metadata as _registry_metadata
 from . import sentinel as _sentinel
@@ -90,6 +91,9 @@ def evaluate(
 
     for hit in _install_hooks.scan_manifests(manifests_list, deps_list):
         out.append(_install_hook_to_finding(hit))
+
+    for och in _orphan_commit_dep.scan_manifests(manifests_list, deps_list):
+        out.append(_orphan_commit_to_finding(och))
 
     for cbs in _cargo_build.scan_manifests(manifests_list, deps_list):
         out.append(SupplyChainFinding(
@@ -184,6 +188,52 @@ def _install_hook_to_finding(
         severity=hit.severity,             # type: ignore[arg-type]
         confidence=hit.confidence,
     )
+
+
+def _orphan_commit_to_finding(
+    och: _orphan_commit_dep.OrphanCommitFinding,
+) -> SupplyChainFinding:
+    """Convert an orphan-commit-dep hit. ``finding_id`` deliberately
+    includes the dep-name + field so two refs from the same
+    package.json (e.g. one in ``dependencies`` + one in
+    ``optionalDependencies``) emit as distinct findings."""
+    return SupplyChainFinding(
+        finding_id=(
+            f"sca:supplychain:orphan_commit_dep:"
+            f"{och.dependency.ecosystem}:{och.dependency.name}:"
+            f"{och.hit.field}:{och.hit.dep_name}:"
+            f"{och.dependency.declared_in}"
+        ),
+        kind="orphan_commit_dep",
+        dependency=och.dependency,
+        detail=(
+            f"`{och.hit.field}.{och.hit.dep_name}` references "
+            f"git ref `{och.hit.owner}/{och.hit.repo}"
+            f"{('#' + och.hit.ref) if och.hit.ref else ''}` "
+            f"({_explain_ref_kind(och.hit.ref_kind)}). "
+            f"Mini Shai-Hulud used this shape as a secondary "
+            f"delivery channel — verify the ref is legitimate."
+        ),
+        evidence={
+            "field": och.hit.field,
+            "dep_name": och.hit.dep_name,
+            "ref_spec": och.hit.ref_spec,
+            "owner": och.hit.owner,
+            "repo": och.hit.repo,
+            "ref": och.hit.ref,
+            "ref_kind": och.hit.ref_kind,
+        },
+        severity=och.severity,                # type: ignore[arg-type]
+        confidence=och.confidence,
+    )
+
+
+def _explain_ref_kind(kind: str) -> str:
+    return {
+        "sha40": "pinned to a 40-char SHA",
+        "tag_or_branch": "pinned to a tag or branch",
+        "none": "no explicit ref — resolves to default branch",
+    }.get(kind, kind)
 
 
 def _sentinel_to_finding(

@@ -50,7 +50,8 @@ class RegistryMetaFinding:
                                               # "version_publish" |
                                               # "maintainer_change" |
                                               # "maintainer_account_change" |
-                                              # "low_bus_factor"
+                                              # "low_bus_factor" |
+                                              # "payload_size_spike"
     dependency: Dependency
     detail: str
     evidence: Dict[str, Any]
@@ -112,6 +113,7 @@ def scan_deps(
         dep_findings.extend(_maintainer_change_check(dep, meta, now))
         dep_findings.extend(_maintainer_account_change_check(dep, meta, now))
         dep_findings.extend(_low_bus_factor_check(dep, meta))
+        dep_findings.extend(_payload_size_check(dep, meta))
         # Severity escalation based on co-occurrence for this dep.
         _escalate_severity(dep_findings, meta)
         return dep_findings
@@ -158,6 +160,15 @@ class _Meta:
     is_dormant: bool = False
     # True when the gap between latest and second-latest publish exceeds
     # _DORMANT_DAYS.
+    version_sizes: Dict[str, int] = field(default_factory=dict)
+    # Per-version unpacked tarball size in bytes. npm-only — populated
+    # from ``versions[v].dist.unpackedSize``. Used by the payload-size-
+    # spike detector to compare a freshly-installed version against
+    # the immediately-prior version's footprint.
+    version_chronology: List[str] = field(default_factory=list)
+    # Versions in publish-order (oldest → newest). Enables finding the
+    # version PUBLISHED IMMEDIATELY BEFORE the dep's installed version
+    # without re-walking the raw timestamps dict.
 
 
 # Process-lifetime memo of the *extracted* ``_Meta`` keyed on
@@ -396,6 +407,24 @@ def _from_npm(raw: dict) -> _Meta:
                             "email": m.get("email", ""),
                         })
 
+    # Per-version unpacked tarball sizes. Populated only when the
+    # registry document carries ``dist.unpackedSize`` (set by npm
+    # publish in v6+); legacy packages without it leave the map
+    # empty and the payload-size detector skips them. Don't fall
+    # back to ``dist.size`` (compressed tarball) — that's not
+    # directly comparable to the unpacked-bytes value.
+    version_sizes: Dict[str, int] = {}
+    if isinstance(versions_obj, dict):
+        for ver, ver_data in versions_obj.items():
+            if not isinstance(ver_data, dict):
+                continue
+            dist = ver_data.get("dist")
+            if not isinstance(dist, dict):
+                continue
+            sz = dist.get("unpackedSize")
+            if isinstance(sz, int) and sz > 0:
+                version_sizes[ver] = sz
+
     return _Meta(
         first_publish=first_pub,
         latest_publish=latest_pub,
@@ -403,6 +432,8 @@ def _from_npm(raw: dict) -> _Meta:
         maintainers=maintainers,
         previous_maintainers=previous_maintainers,
         is_dormant=is_dormant,
+        version_sizes=version_sizes,
+        version_chronology=[v for _, v in version_entries],
     )
 
 
@@ -628,6 +659,126 @@ def _maintainer_account_change_check(
 # Detector: low_bus_factor
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Detector: payload_size_spike
+# ---------------------------------------------------------------------------
+#
+# Compare ``dep.version``'s unpacked tarball size against the version
+# PUBLISHED IMMEDIATELY BEFORE it. Flag dramatic growth — the Mini
+# Shai-Hulud (May 2026) shape: ``size-sensor`` jumped from a small
+# utility (50 KB) to 498 KB when the compromised maintainer
+# published the malicious version.
+#
+# Complements ``binary_capability_delta`` (capability-shape change):
+# that catches "the code now does new dangerous things"; this
+# catches "the code grew dramatically even if the shape is similar"
+# (e.g. a massively-inflated obfuscated payload).
+#
+# Defaults tuned to surface only obvious outliers:
+#   * ratio > 5x          — five-fold growth
+#   * absolute floor 50KB — don't fire on a 1KB → 10KB jump
+#
+# Both gates must pass before a finding emits. A 100 byte → 1 KB
+# growth is ratio-wise large but absolutely tiny — not actionable.
+
+# Minimum new-version size in bytes for the detector to fire.
+# Below this, the ratio signal is dominated by tarball-format
+# overhead noise and would false-positive on tiny utility
+# packages.
+_PAYLOAD_SIZE_FLOOR_BYTES = 50 * 1024
+
+# New-version size / previous-version size threshold. 5x covers
+# the Mini Shai-Hulud shape (498 KB / 50 KB ≈ 10x) with headroom
+# for less dramatic injections (300% growth still surfaces).
+_PAYLOAD_SIZE_RATIO_THRESHOLD = 5.0
+
+
+def _payload_size_check(
+    dep: Dependency, meta: _Meta,
+) -> List[RegistryMetaFinding]:
+    """Compare ``dep.version`` size to the immediately-prior version.
+
+    Returns ``[]`` when:
+      * the dep has no concrete version (no lockfile pin),
+      * the registry didn't carry per-version ``unpackedSize``
+        for this dep (PyPI, or pre-v6 npm publishes),
+      * the dep's version is the FIRST published version (no prior
+        to compare against),
+      * neither growth-ratio nor absolute-floor gate fires.
+
+    Confidence is ``medium`` rather than ``high`` because legitimate
+    growth happens — a library that legitimately added a large
+    feature (new runtime, native binary, bundled assets) can hit
+    5x. Operator triage is the right disposition.
+    """
+    if not dep.version:
+        return []
+    if not meta.version_sizes or not meta.version_chronology:
+        return []
+    new_size = meta.version_sizes.get(dep.version)
+    if new_size is None:
+        return []
+    # Find the version published immediately before ``dep.version``.
+    # ``version_chronology`` is oldest→newest. If dep.version isn't
+    # in the chronology (rare — typically means it was unpublished
+    # later), bail.
+    try:
+        idx = meta.version_chronology.index(dep.version)
+    except ValueError:
+        return []
+    if idx == 0:
+        return []  # first published version — no prior to compare
+    # Walk backward to find the most-recent prior with a known
+    # size. Some packages have intermediate versions without
+    # unpackedSize (e.g. an old pre-v6 publish that was later
+    # supplemented).
+    prev_ver = None
+    prev_size = None
+    for back_idx in range(idx - 1, -1, -1):
+        candidate_ver = meta.version_chronology[back_idx]
+        candidate_size = meta.version_sizes.get(candidate_ver)
+        if candidate_size is not None and candidate_size > 0:
+            prev_ver = candidate_ver
+            prev_size = candidate_size
+            break
+    if prev_ver is None or prev_size is None:
+        return []
+    if new_size < _PAYLOAD_SIZE_FLOOR_BYTES:
+        return []
+    ratio = new_size / prev_size
+    if ratio < _PAYLOAD_SIZE_RATIO_THRESHOLD:
+        return []
+    return [RegistryMetaFinding(
+        kind="payload_size_spike",
+        dependency=dep,
+        detail=(
+            f"{dep.ecosystem}:{dep.name}@{dep.version} unpacked "
+            f"size is {new_size:,} bytes — {ratio:.1f}x larger than "
+            f"the previous published version {prev_ver} "
+            f"({prev_size:,} bytes). Mini Shai-Hulud used this "
+            f"shape (legitimate utility → bloated obfuscated "
+            f"payload) as the primary injection signature."
+        ),
+        evidence={
+            "current_version": dep.version,
+            "current_size_bytes": new_size,
+            "previous_version": prev_ver,
+            "previous_size_bytes": prev_size,
+            "growth_ratio": round(ratio, 2),
+            "ratio_threshold": _PAYLOAD_SIZE_RATIO_THRESHOLD,
+            "size_floor_bytes": _PAYLOAD_SIZE_FLOOR_BYTES,
+        },
+        severity="medium",
+        confidence=Confidence(
+            "medium",
+            reason=(
+                "registry unpackedSize delta; legitimate large "
+                "growth is possible — operator triage needed"
+            ),
+        ),
+    )]
+
+
 def _low_bus_factor_check(
     dep: Dependency, meta: _Meta,
 ) -> List[RegistryMetaFinding]:
@@ -685,18 +836,34 @@ def _escalate_severity(
     kinds = {f.kind for f in findings}
     has_publish = "recent_publish" in kinds or "version_publish" in kinds
     has_maint_change = "maintainer_change" in kinds
+    has_size_spike = "payload_size_spike" in kinds
     dormant = meta.is_dormant
 
-    if has_publish and has_maint_change and dormant:
+    # The Mini Shai-Hulud shape: recent version_publish + maintainer
+    # change + payload size spike. Any one of the three is moderate
+    # noise; all three together is the canonical maintainer-takeover
+    # signature. Escalate to ``critical`` so it's impossible to miss
+    # via severity filters.
+    if has_publish and has_maint_change and has_size_spike:
+        target_sev = "critical"
+    elif has_publish and has_maint_change and dormant:
         target_sev = "high"
     elif has_publish and has_maint_change:
         target_sev = "medium"
+    elif has_size_spike and has_publish:
+        # Size spike + recent publish (no observed maintainer change)
+        # — could be a maintainer-credential compromise where the
+        # registry doesn't expose the maintainer-list delta. Bump to
+        # high so the size spike doesn't read as a routine library
+        # growth event.
+        target_sev = "high"
     else:
         return  # no escalation needed
 
     for f in findings:
         if f.kind in ("recent_publish", "version_publish",
-                       "maintainer_change", "low_bus_factor"):
+                       "maintainer_change", "low_bus_factor",
+                       "payload_size_spike"):
             f.severity = target_sev
 
 

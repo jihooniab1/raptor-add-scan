@@ -29,6 +29,15 @@ name: SCA-gated self-bump
 # Auth surface: needs ``contents: write`` + ``pull-requests: write``
 # to open the bump PR. Same surface as Dependabot. Auto-merge is
 # deliberately NOT enabled — operator reviews the PR before merging.
+#
+# Branch-protection assumption: this workflow's safety relies on
+# ``main`` having branch protection that requires PR review before
+# merge. The Megalodon attack (May 2026) compromised 5,500 repos
+# via "direct Poisoned Pipeline Execution" — pushing malicious
+# workflow YAML directly to ``main`` on repos that didn't enforce
+# review. If you copy this workflow into a repo without branch
+# protection, you've removed the operator-review gate that prevents
+# a compromised bot identity from auto-merging its own bump.
 
 on:
   schedule:
