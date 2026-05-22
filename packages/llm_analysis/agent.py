@@ -747,6 +747,9 @@ class AutonomousSecurityAgentV2:
             build_analysis_prompt_bundle,
             build_analysis_schema,
         )
+        from packages.llm_analysis.source_intel_inject import (
+            evidence_blocks_for_finding,
+        )
 
         analysis_schema = build_analysis_schema(has_dataflow=vuln.has_dataflow)
 
@@ -758,6 +761,15 @@ class AutonomousSecurityAgentV2:
         function_name = meta.get("name") or ""
         file_includes = meta.get("includes") or ()
         function_calls_made = meta.get("calls") or meta.get("callees") or ()
+
+        # Pull source_intel evidence (cached during sequential-mode
+        # priming earlier in this run). Returns () for rule_ids not
+        # in the memory-corruption set or when prep failed.
+        si_blocks = evidence_blocks_for_finding({
+            "rule_id": vuln.rule_id,
+            "repo_path": str(vuln.repo_path),
+            "metadata": meta,
+        })
 
         bundle = build_analysis_prompt_bundle(
             rule_id=vuln.rule_id,
@@ -778,6 +790,7 @@ class AutonomousSecurityAgentV2:
             function_name=function_name,
             file_includes=file_includes,
             function_calls_made=function_calls_made,
+            extra_blocks=si_blocks,
         )
         prompt = next(m.content for m in bundle.messages if m.role == "user")
         system_prompt = next(m.content for m in bundle.messages if m.role == "system")
@@ -1112,6 +1125,15 @@ class AutonomousSecurityAgentV2:
         logger.info(f"   Target: {vuln.file_path}:{vuln.start_line}")
 
         from packages.llm_analysis.prompts.exploit import build_exploit_prompt_bundle
+        from packages.llm_analysis.source_intel_inject import (
+            evidence_blocks_for_finding,
+        )
+
+        si_blocks = evidence_blocks_for_finding({
+            "rule_id": vuln.rule_id,
+            "repo_path": str(vuln.repo_path),
+            "metadata": vuln.metadata or {},
+        })
 
         bundle = build_exploit_prompt_bundle(
             rule_id=vuln.rule_id,
@@ -1122,6 +1144,7 @@ class AutonomousSecurityAgentV2:
             code=vuln.full_code,
             surrounding_context=vuln.surrounding_context,
             feasibility=vuln.feasibility if hasattr(vuln, 'feasibility') else None,
+            extra_blocks=si_blocks,
         )
         prompt = next(m.content for m in bundle.messages if m.role == "user")
         system_prompt = next(m.content for m in bundle.messages if m.role == "system")
@@ -1234,11 +1257,20 @@ class AutonomousSecurityAgentV2:
             full_file_content = f.read()
 
         from packages.llm_analysis.prompts.patch import build_patch_prompt_bundle
+        from packages.llm_analysis.source_intel_inject import (
+            evidence_blocks_for_finding,
+        )
 
         # Load attack path if available
         attack_path = None
         if vuln.attack_path_ref:
             attack_path = self._load_attack_path(vuln.attack_path_ref)
+
+        si_blocks = evidence_blocks_for_finding({
+            "rule_id": vuln.rule_id,
+            "repo_path": str(vuln.repo_path),
+            "metadata": vuln.metadata or {},
+        })
 
         bundle = build_patch_prompt_bundle(
             rule_id=vuln.rule_id,
@@ -1251,6 +1283,7 @@ class AutonomousSecurityAgentV2:
             full_file_content=full_file_content,
             feasibility=vuln.feasibility,
             attack_path=attack_path,
+            extra_blocks=si_blocks,
         )
         prompt = next(m.content for m in bundle.messages if m.role == "user")
         system_prompt = next(m.content for m in bundle.messages if m.role == "system")
@@ -1446,6 +1479,49 @@ class AutonomousSecurityAgentV2:
             logger.info("=" * 70)
 
         unique_findings = prioritized_findings
+
+        # Phase D PR1: prime source_intel cache for sequential mode.
+        # Parallel / prep-only mode is handled by orchestrate() in the
+        # parent raptor_agentic.py process — priming there doesn't
+        # help THIS subprocess. Sequential mode (full LLM analysis
+        # happening here) needs the cache primed locally so
+        # ``tasks.py:evidence_blocks_for_finding`` finds populated
+        # state when each finding's prompt bundle is assembled.
+        #
+        # Pre-fix the per-finding ``evidence_blocks_for_finding``
+        # silently returned ``()`` because no caller had populated
+        # the cache for this subprocess — gap-#2-final-E2E surfaced
+        # the latent bug by observing zero source-intel-evidence
+        # blocks in an /agentic --sequential run despite the wiring
+        # being in place.
+        if not is_prep_only and self.repo_path:
+            logger.info(
+                "agent.py: priming source_intel cache for %s "
+                "(sequential-mode finding analysis)",
+                self.repo_path,
+            )
+            try:
+                from packages.llm_analysis.source_intel_inject import (
+                    prepare_source_intel,
+                )
+                prepare_source_intel(self.repo_path)
+            except Exception as e:  # noqa: BLE001
+                # Surface at INFO so the failure path is visible in
+                # operator logs — gap-#2 verification on /agentic
+                # subprocess made the prior debug-level log
+                # invisible, making "did this call run?" impossible
+                # to answer from the log alone.
+                logger.info(
+                    "agent.py: prepare_source_intel(%s) failed: %s — "
+                    "continuing without source_intel evidence",
+                    self.repo_path, e,
+                )
+        else:
+            logger.info(
+                "agent.py: skipping source_intel cache prime "
+                "(is_prep_only=%s, repo_path=%s)",
+                is_prep_only, self.repo_path,
+            )
 
         results = []
         analyzed = 0
