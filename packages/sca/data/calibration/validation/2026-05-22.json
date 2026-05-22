@@ -1,10 +1,10 @@
 {
   "by_ecosystem": {
     "Cargo": {
-      "spearman_rho": 0.6531205715635333,
-      "top_20_precision": 0.2,
-      "total": 145,
-      "with_signal": 10
+      "spearman_rho": 0.6674404370051692,
+      "top_20_precision": 0.55,
+      "total": 266,
+      "with_signal": 34
     },
     "Go": {
       "spearman_rho": 0.5498338437949406,
@@ -25,10 +25,10 @@
       "with_signal": 2
     },
     "Packagist": {
-      "spearman_rho": 0.5318003767284558,
-      "top_20_precision": 0.5,
-      "total": 141,
-      "with_signal": 44
+      "spearman_rho": 0.5544421156294441,
+      "top_20_precision": 0.55,
+      "total": 210,
+      "with_signal": 53
     },
     "PyPI": {
       "spearman_rho": 0.6364433534235868,
@@ -43,10 +43,10 @@
       "with_signal": 11
     },
     "npm": {
-      "spearman_rho": 0.6893728009622431,
+      "spearman_rho": 0.6923411258201145,
       "top_20_precision": 0.85,
-      "total": 1634,
-      "with_signal": 423
+      "total": 1654,
+      "with_signal": 434
     }
   },
   "corpus_provenance": {
@@ -55,12 +55,12 @@
     "kev_signals.json": "2026-05-08T16:23:16Z",
     "metasploit_signals.json": "2026-05-08T16:40:38Z"
   },
-  "findings_total": 4252,
-  "findings_with_score": 4252,
-  "findings_with_signal": 650,
+  "findings_total": 4462,
+  "findings_with_score": 4462,
+  "findings_with_signal": 694,
   "notes": [],
   "snapshot_date": "2026-05-22",
-  "spearman_rho": 0.5713875333949643,
+  "spearman_rho": 0.5735337040529855,
   "threshold_spearman": 0.4,
   "threshold_top_20": 0.5,
   "top_20_precision": 1.0,

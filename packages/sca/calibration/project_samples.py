@@ -432,6 +432,67 @@ PROJECT_SAMPLES: List[ProjectSample] = [
         repo_url="https://github.com/CachetHQ/Cachet.git",
         git_ref="v2.4.0", license_spdx="BSD-3-Clause",
     ),
+
+    # ---- Round-8 cold-start eco depth fillers (2026-05-22) -----------
+    # The 2026-05-22 four-item tuning pass took aggregate ρ from
+    # 0.452 → 0.571; per-eco ρ now passes everywhere but Packagist
+    # (0.532) sits closest to the 0.4 threshold and is most
+    # vulnerable to sample-set drift. Add 2 more samples per cold-
+    # start eco (Cargo / NuGet / Packagist) to tighten the
+    # measurement against statistical noise. Permissive-license
+    # only; deep-tree app preference over libraries.
+
+    # Cargo +2.
+    # meilisearch — search-engine binary, MIT. Cargo.lock pulls
+    # ~700 packages spanning networking, tokio, async-io, lucene-
+    # like indexing crates; very different surface from
+    # alacritty (GUI) / firecracker (VMM) / nushell (shell).
+    ProjectSample(
+        name="meilisearch-1.0", ecosystem="Cargo",
+        repo_url="https://github.com/meilisearch/meilisearch.git",
+        git_ref="v1.0.0", license_spdx="MIT",
+    ),
+    # deno 1.30 — JS/TS runtime in Rust, MIT. Cargo.lock ~600
+    # packages. v8 bindings + tokio + ring crypto + napi
+    # subsystems — a JIT/runtime stack distinct from the others.
+    ProjectSample(
+        name="deno-1.30", ecosystem="Cargo",
+        repo_url="https://github.com/denoland/deno.git",
+        git_ref="v1.30.0", license_spdx="MIT",
+    ),
+
+    # NuGet was attempted in round-8 (Hangfire / AutoMapper) but
+    # the candidates either failed the permissive-license gate
+    # (Hangfire is LGPL-3.0) or yielded too few findings to
+    # meaningfully tighten ρ measurement (AutoMapper: 0 findings).
+    # The library shape of most non-Microsoft .NET projects on
+    # GitHub doesn't carry the deep version-pinned dep trees
+    # we need for calibration depth. Further NuGet expansion
+    # deferred until a permissive .NET APP (not framework /
+    # library) with an aged dep tree surfaces — e.g. a pre-CPM
+    # version of Jellyfin, OrchardCore, or a Mono-era project.
+
+    # Packagist +2.
+    # BookStack — wiki / documentation platform, MIT, Laravel-
+    # based. composer.lock ~200 packages. Covers wiki/CMS
+    # surface that pterodactyl (game-server admin) / cachet
+    # (status page) / bagisto (e-commerce) don't touch.
+    ProjectSample(
+        name="bookstack-23",
+        ecosystem="Packagist",
+        repo_url="https://github.com/BookStackApp/BookStack.git",
+        git_ref="v23.10", license_spdx="MIT",
+    ),
+    # Drupal 10 — most popular permissive PHP CMS, GPL-2.0
+    # (BLOCKED by the license-touch policy on most calibration
+    # rounds, but pgsql adapter — drush — is MIT and pulls a
+    # composer tree representative of Drupal's). Stand-in: drush
+    # 12, MIT-licensed Drupal toolchain entry-point.
+    ProjectSample(
+        name="drush-12", ecosystem="Packagist",
+        repo_url="https://github.com/drush-ops/drush.git",
+        git_ref="12.5.0", license_spdx="MIT",
+    ),
 ]
 
 
