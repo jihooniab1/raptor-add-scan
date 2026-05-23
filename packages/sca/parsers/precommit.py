@@ -351,10 +351,12 @@ def _build_dep(
         purl = f"pkg:{purl_type}/{name}@{rev}"
     else:
         # Unmapped repo — fall back to GitHub purl for visibility.
+        # ``canonical`` is ``{host}/{path}`` (lowercased) from
+        # _canonicalise_repo, so partition the host off explicitly
+        # rather than substring-matching the prefix.
         eco = _GITHUB_FALLBACK_ECOSYSTEM
-        name = canonical[len("github.com/"):] if canonical.startswith(
-            "github.com/",
-        ) else canonical
+        host, _, path = canonical.partition("/")
+        name = path if host == "github.com" and path else canonical
         purl = f"pkg:github/{name}@{rev}"
 
     return Dependency(

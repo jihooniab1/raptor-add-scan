@@ -42,6 +42,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Sequence
+from urllib.parse import urlparse
 
 from core.security.log_sanitisation import escape_nonprintable
 from core.security.prompt_output_sanitise import sanitise_string
@@ -593,11 +594,25 @@ def _render_one_vuln(
         # commits which buries the useful link. Cap at 2 (down
         # from 3) — the third link was rarely informative and
         # typically pushed the advisory section past the fold.
+        # CVE-authority hostnames the triage prioritiser recognises.
+        # Match by parsed hostname (not substring) so a URL like
+        # ``https://attacker.example/?ref=nvd.nist.gov`` doesn't
+        # masquerade as an NVD link in the triage order.
+        _CVE_AUTHORITY_HOSTS = frozenset({
+            "nvd.nist.gov",
+            "cve.org", "www.cve.org",
+            "cve.mitre.org", "www.cve.mitre.org",
+        })
+
         def _ref_priority(url: str) -> int:
+            try:
+                host = (urlparse(url).hostname or "").lower()
+            except ValueError:
+                host = ""
             u = url.lower()
             if "/advisories/ghsa-" in u or "/security-advisories/" in u:
                 return 0
-            if "nvd.nist.gov" in u or "cve.org" in u or "cve.mitre.org" in u:
+            if host in _CVE_AUTHORITY_HOSTS:
                 return 1
             if "/security/" in u or "/advisory" in u:
                 return 2

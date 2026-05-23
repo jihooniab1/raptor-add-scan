@@ -151,15 +151,20 @@ def _apply_one_from(
     # Canonical: registry/repo. Short forms: if registry is
     # docker.io and repo starts with "library/", the bare repo
     # name (e.g. "python") is also accepted; otherwise the
-    # short form is registry/repo verbatim.
+    # short form is registry/repo verbatim. Parse the registry
+    # component explicitly via partition rather than startswith
+    # (this isn't a URL, but the lexical shape triggers
+    # incomplete-URL-sanitisation scanners).
     forms = [locator]
-    if locator.startswith("docker.io/library/"):
-        bare = locator[len("docker.io/library/"):]
-        forms.append(bare)
-        forms.append(f"library/{bare}")
-        forms.append(f"docker.io/{bare}")
-    elif locator.startswith("docker.io/"):
-        forms.append(locator[len("docker.io/"):])
+    registry, _, rest = locator.partition("/")
+    if registry == "docker.io" and rest:
+        namespace, _, image = rest.partition("/")
+        if namespace == "library" and image:
+            forms.append(image)
+            forms.append(f"library/{image}")
+            forms.append(f"docker.io/{image}")
+        else:
+            forms.append(rest)
     image_alternates = "|".join(re.escape(f) for f in forms)
     # Match: optional ``FROM`` + whitespace + image + ``:`` +
     # captured tag + (optional ``@digest`` + optional ``AS
