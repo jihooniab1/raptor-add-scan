@@ -120,6 +120,14 @@ jobs:
           fi
 
       - name: Post PR comment
+        # Non-fatal: PRs from forks get a read-only GITHUB_TOKEN
+        # regardless of the workflow's ``permissions:`` block (the
+        # org-level "Workflow permissions" policy gates write tokens
+        # to same-repo PRs). When the comment-post fails we log a
+        # warning and continue — the diff is still surfaced via
+        # GITHUB_STEP_SUMMARY (above) and the regression gate (below)
+        # still fails on high-severity additions.
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Idempotent: ``gh pr comment --create-if-none`` would be
@@ -139,13 +147,22 @@ jobs:
           EXISTING=$(gh api \
             "/repos/${{ github.repository }}/issues/$PR/comments" \
             --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" \
-            | head -1)
+            | head -1) || {
+              echo "::warning::sca-pr-gate: could not list PR comments (likely a fork PR with restricted GITHUB_TOKEN); skipping comment post. Diff is in the step summary."
+              exit 0
+            }
           if [ -n "$EXISTING" ]; then
             gh api -X PATCH \
               "/repos/${{ github.repository }}/issues/comments/$EXISTING" \
-              -f body="$BODY"
+              -f body="$BODY" || {
+                echo "::warning::sca-pr-gate: PATCH on existing comment failed; skipping. Diff is in the step summary."
+                exit 0
+              }
           else
-            gh pr comment "$PR" --body "$BODY"
+            gh pr comment "$PR" --body "$BODY" || {
+              echo "::warning::sca-pr-gate: gh pr comment failed (likely a fork PR with restricted GITHUB_TOKEN); skipping. Diff is in the step summary."
+              exit 0
+            }
           fi
 
       - name: Fail on high-severity regressions
