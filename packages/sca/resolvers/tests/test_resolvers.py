@@ -17,11 +17,49 @@ import subprocess
 from pathlib import Path
 from typing import List
 
+import pytest
 
 from packages.sca.resolvers import get_resolver
 from packages.sca.resolvers.gomod import GoResolver
 from packages.sca.resolvers.npm import NpmResolver
 from packages.sca.resolvers.pip import PipResolver
+
+
+@pytest.fixture(autouse=True)
+def _reset_sandbox_probe_caches():
+    """Reset ``core.sandbox.state`` probe caches before each test.
+
+    Several module-level caches in ``core.sandbox.state`` record
+    whether unprivileged user-namespaces work on this host
+    (``_net_available_cache``, ``_mount_available_cache``, etc.).
+    They're per-process singletons populated on first probe — once
+    a prior test runs ``analyze_binary`` (or anything that
+    successfully unshare-probes), the cache flips to ``True``, and
+    every subsequent ``NpmResolver().dry_run()`` engages real
+    sandbox wrapping. The wrapped command becomes
+    ``[/usr/bin/unshare, --user, --pid, ..., npm, install, ...]``
+    rather than ``[npm, install, ...]`` — which slips past the
+    test's ``cmd[:2] == ["npm", "install"]`` matcher.
+
+    Resetting these caches before each test makes the tests
+    order-independent: every test gets a fresh probe, and since
+    ``subprocess.run`` is monkeypatched to return non-zero for
+    the unshare probe, the sandbox stays disabled inside the
+    test — so the resolver invokes ``[npm, install, ...]``
+    directly + the matcher matches.
+
+    Idempotent + cheap; safe to run unconditionally.
+    """
+    from core.sandbox import state
+    state._net_available_cache = None
+    state._mount_available_cache = None
+    # ``_resolve_sandbox_binary`` also caches per-binary paths in
+    # ``state._<name>_path_cache`` attributes — they're keyed on
+    # the binary name (``unshare`` / ``prlimit``) and the path
+    # doesn't change at runtime, so we leave those alone.
+    yield
+    state._net_available_cache = None
+    state._mount_available_cache = None
 
 
 # ---------------------------------------------------------------------------

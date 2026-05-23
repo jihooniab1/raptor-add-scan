@@ -111,8 +111,50 @@ class AnalysisTask(DispatchTask):
 
 
 def _is_sca_finding(f: Dict) -> bool:
-    return f.get("source_type") == "dependency" or (
-        f.get("vuln_type", "").startswith("sca:")
+    """Canonical "is this an SCA finding?" check.
+
+    Recognises three identification methods because the SCA pipeline
+    has tagged findings differently over time:
+      * ``source_type == "dependency"`` (the post-2026 canonical
+        marker — set by ``packages/sca/findings.py``)
+      * ``vuln_type`` starting with ``sca:`` (set on the
+        ``JoinedFinding`` wrapper at serialisation)
+      * ``rule_id`` starting with ``sca:`` (older code path, still
+        emitted by some consumers that bypass the joiner)
+
+    Broad-by-design: ANY SCA-shaped finding (vulnerable-dependency,
+    hygiene, license, supply-chain) matches. Dispatch sites that
+    only act on vuln-dep findings should use
+    ``_is_sca_vuln_finding`` instead — that's the narrower check.
+    """
+    return (
+        f.get("source_type") == "dependency"
+        or f.get("vuln_type", "").startswith("sca:")
+        or f.get("rule_id", "").startswith("sca:")
+    )
+
+
+def _is_sca_vuln_finding(f: Dict) -> bool:
+    """Narrower companion to ``_is_sca_finding``: only ``sca:
+    vulnerable_dependency`` findings, NOT hygiene / license /
+    supply-chain.
+
+    ExploitTask + PatchTask both want this narrower predicate —
+    you don't generate an exploit-PoC or a manifest patch for
+    "lockfile_missing" or "low_bus_factor". Hygiene findings are
+    SCA-shaped but not actionable in those task families.
+
+    Recognises the vuln-specific subtype via:
+      * ``vuln_type`` starting with ``sca:vulnerable_dependency``
+      * ``rule_id`` starting with ``sca:vulnerable_dependency``
+
+    Does NOT key on ``source_type=="dependency"`` alone — that
+    field is set on every SCA finding (hygiene included) and
+    wouldn't discriminate.
+    """
+    return (
+        f.get("vuln_type", "").startswith("sca:vulnerable_dependency")
+        or f.get("rule_id", "").startswith("sca:vulnerable_dependency")
     )
 
 
@@ -206,8 +248,12 @@ class ExploitTask(DispatchTask):
             if prior.get("is_exploitable"):
                 selected.append(f)
                 continue
-            # SCA findings: select if reachable or KEV-listed
-            if f.get("rule_id", "").startswith("sca:vulnerable_dependency"):
+            # SCA findings: select if reachable or KEV-listed.
+            # ``_is_sca_vuln_finding`` is the narrower predicate —
+            # only ``sca:vulnerable_dependency`` matches; hygiene /
+            # license / supply-chain SCA findings are SCA-shaped
+            # but not exploit-PoC targets.
+            if _is_sca_vuln_finding(f):
                 sca = f.get("sca", {})
                 reachability = sca.get("reachability", "")
                 in_kev = sca.get("in_kev", False)
@@ -215,6 +261,18 @@ class ExploitTask(DispatchTask):
                     selected.append(f)
                 elif in_kev and reachability != "not_reachable":
                     selected.append(f)
+        # Highest-priority SCA findings first so a budget-cutoff
+        # truncation upstream catches the most-actionable rows.
+        # Code-shaped findings keep priority 0 (the score helper
+        # only adds for SCA fields), so they sort below SCA hits
+        # — acceptable: code findings already came in with
+        # ``is_exploitable=True`` from prior_results, meaning
+        # they've been pre-validated and don't need re-ranking
+        # here.
+        selected.sort(
+            key=lambda f: _sca_exploit_priority(f) if _is_sca_finding(f) else 0,
+            reverse=True,
+        )
         return selected
 
     def build_prompt(self, finding):
@@ -280,8 +338,11 @@ class PatchTask(DispatchTask):
             if prior.get("is_exploitable"):
                 selected.append(f)
                 continue
-            # SCA findings with a known fix version get a manifest patch
-            if f.get("rule_id", "").startswith("sca:vulnerable_dependency"):
+            # SCA findings with a known fix version get a manifest patch.
+            # Narrower than ``_is_sca_finding`` because hygiene /
+            # license / supply-chain findings aren't patch-targets
+            # even though they're SCA-shaped.
+            if _is_sca_vuln_finding(f):
                 sca = f.get("sca", {})
                 if sca.get("fixed_version"):
                     selected.append(f)
