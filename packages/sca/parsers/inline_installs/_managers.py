@@ -498,8 +498,13 @@ def _parse_brew_args(
 # --- go install (module-path@version) ------------------------------------
 
 # Go module paths can have slashes and dots (``github.com/foo/bar``).
+# ``.`` is only allowed *within* a path component — only ``/`` separates
+# components. Putting ``.`` in both the segment class and the separator
+# class would make the regex ambiguous (``a.b.c`` could group as one
+# segment or three), giving exponential backtracking on adversarial
+# input.
 _GO_NAME_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._\-]*(?:[./][A-Za-z0-9._\-]+)*$")
+    r"^[A-Za-z0-9][A-Za-z0-9._\-]*(?:/[A-Za-z0-9._\-]+)*$")
 
 
 def _parse_go_install_args(

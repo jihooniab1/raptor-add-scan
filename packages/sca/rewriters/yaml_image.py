@@ -128,13 +128,20 @@ def _apply_one_image(
     """
     locator = edit.locator
     forms = [locator]
-    if locator.startswith("docker.io/library/"):
-        bare = locator[len("docker.io/library/"):]
-        forms.append(bare)
-        forms.append(f"library/{bare}")
-        forms.append(f"docker.io/{bare}")
-    elif locator.startswith("docker.io/"):
-        forms.append(locator[len("docker.io/"):])
+    # Only docker.io has short forms (``image: python:3.12`` is implicitly
+    # ``docker.io/library/python:3.12``). Parse the registry component
+    # explicitly via split — avoids ``startswith`` host checks that look
+    # like incomplete URL sanitisation to scanners (this isn't a URL,
+    # but the lexical shape is the same).
+    registry, _, rest = locator.partition("/")
+    if registry == "docker.io" and rest:
+        namespace, _, image = rest.partition("/")
+        if namespace == "library" and image:
+            forms.append(image)
+            forms.append(f"library/{image}")
+            forms.append(f"docker.io/{image}")
+        else:
+            forms.append(rest)
     image_alternates = "|".join(re.escape(f) for f in forms)
     # YAML ``image:`` shape. Supports:
     #   * Bare: ``    image: foo/bar:tag``
