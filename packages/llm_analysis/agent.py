@@ -927,6 +927,19 @@ class AutonomousSecurityAgentV2:
             "repo_path": str(vuln.repo_path),
             "metadata": meta,
         })
+        extra_blocks = list(si_blocks)
+        try:
+            from core.threat_model import load_for_target, prompt_context
+            from core.security.prompt_envelope import UntrustedBlock
+            threat_model = load_for_target(vuln.repo_path)
+            if threat_model:
+                extra_blocks.append(UntrustedBlock(
+                    content=prompt_context(threat_model),
+                    kind="operator-threat-model",
+                    origin="project-threat-model",
+                ))
+        except Exception:
+            pass
 
         bundle = build_analysis_prompt_bundle(
             rule_id=vuln.rule_id,
@@ -947,7 +960,7 @@ class AutonomousSecurityAgentV2:
             function_name=function_name,
             file_includes=file_includes,
             function_calls_made=function_calls_made,
-            extra_blocks=si_blocks,
+            extra_blocks=extra_blocks,
             verified_outcomes=(
                 self._get_verified_outcomes()
                 if self.use_verified_exemplars else ()

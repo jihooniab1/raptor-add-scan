@@ -5,8 +5,10 @@ No Claude Code, no LLM — pure Python.
 """
 
 import argparse
+import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.run.output import unique_run_suffix
@@ -151,6 +153,23 @@ def main():
     p_bin.add_argument(
         "name", nargs="?", default=None,
         help="Project name (default: active)")
+
+    # threat-model — per-project analysis context
+    p_tm = sub.add_parser(
+        "threat-model",
+        help="Manage the project threat-model artefact",
+        usage=("raptor project threat-model [init|show|export|sync] "
+               "[<name>] [--from-context-map <path>] [--json]"),
+        **_F,
+    )
+    p_tm.add_argument(
+        "action", nargs="?", default="show",
+        help="Action: init, show, export, sync, or a project name")
+    p_tm.add_argument("name", nargs="?", default=None, help="Project name (default: active)")
+    p_tm.add_argument(
+        "--from-context-map", default=None, metavar="<path>",
+        help="Seed init from an /understand context-map.json")
+    p_tm.add_argument("--json", dest="json_out", action="store_true", help="Print JSON")
 
     # use
     p_use = sub.add_parser("use", help="Set the active project (no arg = show current)",
@@ -486,6 +505,9 @@ def main():
                 p.binaries = []
                 save_json(project_file, p.to_dict())
                 print(_green(f"Cleared binaries for '{name}'"))
+
+        elif args.subcommand == "threat-model":
+            _handle_threat_model(mgr, args)
 
         elif args.subcommand == "list":
             projects = mgr.list_projects()
@@ -993,9 +1015,95 @@ def _get_output_summary(run_dir, meta):
     return result
 
 
+def _handle_threat_model(mgr, args) -> None:
+    """Create, show, export, or resync a project's threat-model artefact."""
+    from core.json import load_json, save_json
+    from core.threat_model import (
+        blank_for_project,
+        from_context_map,
+        load_model,
+        project_threat_model_paths,
+        render_markdown,
+        save_model,
+    )
+
+    valid_actions = {"init", "show", "export", "sync"}
+    if args.action not in valid_actions:
+        if args.name is None:
+            args.name = args.action
+            args.action = "show"
+        else:
+            print(_red(f"Unknown threat-model action: {args.action}"))
+            return
+
+    name = args.name or _get_active_project()
+    if not name:
+        print(_red("No project specified. Use: raptor project threat-model init <name>"))
+        return
+    project = mgr.load(name)
+    if not project:
+        print(_red(f"Project '{name}' not found."))
+        return
+
+    json_path, markdown_path = project_threat_model_paths(project)
+    if getattr(project, "threat_model_path", ""):
+        json_path = Path(project.threat_model_path)
+        markdown_path = json_path.with_name("THREAT_MODEL.md")
+
+    if args.action == "init":
+        context_map = None
+        if args.from_context_map:
+            context_map = load_json(Path(args.from_context_map))
+            if not isinstance(context_map, dict):
+                print(_red(f"Not a context-map JSON object: {args.from_context_map}"))
+                return
+        model = from_context_map(project, context_map) if context_map else blank_for_project(project)
+        save_model(model, json_path, markdown_path)
+        project.threat_model_path = str(json_path)
+        project.threat_model_updated = model.updated_at
+        save_json(mgr.projects_dir / f"{name}.json", project.to_dict())
+        print(_green(f"Threat model initialised for '{name}'"))
+        print(f"  json:     {json_path}")
+        print(f"  markdown: {markdown_path}")
+        if model.focus_areas:
+            print(f"  focus areas: {len(model.focus_areas)}")
+        return
+
+    model = load_model(json_path)
+    if not model:
+        print(_yellow(f"Project '{name}' has no threat model yet."))
+        print(f"Run: raptor project threat-model init {name}")
+        return
+
+    if args.action == "sync":
+        markdown_path.write_text(render_markdown(model), encoding="utf-8")
+        project.threat_model_updated = datetime.now(timezone.utc).isoformat()
+        save_json(mgr.projects_dir / f"{name}.json", project.to_dict())
+        print(_green(f"Threat model markdown synced: {markdown_path}"))
+        return
+
+    if args.action == "export":
+        print(render_markdown(model), end="")
+        return
+
+    if args.json_out:
+        print(json.dumps(model.to_dict(), indent=2, sort_keys=True))
+        return
+
+    print(f"Project: {project.name}")
+    print(f"Threat model: {json_path}")
+    print(f"Markdown: {markdown_path}")
+    print(f"Updated: {model.updated_at}")
+    print(f"Source: {model.source}")
+    print(f"Focus areas: {len(model.focus_areas)}")
+    for item in model.focus_areas[:8]:
+        print(f"  - {item}")
+
+
 def _print_status(project):
     """Print project status."""
     from core.run import load_run_metadata
+    from core.threat_model import load_model, project_threat_model_paths
 
     print(f"Project: {project.name}")
     if project.description:
@@ -1003,6 +1111,17 @@ def _print_status(project):
     print(f"Target: {project.target}")
     print(f"Output: {project.output_dir}")
     print(f"Created: {project.created[:10] if project.created else 'unknown'}")
+    tm_path = (
+        Path(project.threat_model_path)
+        if getattr(project, "threat_model_path", "")
+        else project_threat_model_paths(project)[0]
+    )
+    if tm_path.exists():
+        model = load_model(tm_path)
+        count = len(model.focus_areas) if model else 0
+        print(f"Threat model: {tm_path} ({count} focus areas)")
+    else:
+        print("Threat model: not initialised")
     if project.notes:
         print(f"Notes: {project.notes}")
 

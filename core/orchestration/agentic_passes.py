@@ -1148,11 +1148,13 @@ def _build_understand_prompt(target: Path, understand_dir: Path) -> str:
     safe_target = escape_nonprintable(str(target))
     safe_dir = escape_nonprintable(str(understand_dir))
     safe_raptor = escape_nonprintable(str(_RAPTOR_DIR))
+    threat_model = _threat_model_prompt_block(target)
     return f"""You are running the /understand --map workflow on a target repository
 as a pre-pass for the /agentic security workflow.
 
 Target repository: {safe_target}
 Output directory:  {safe_dir}
+{threat_model}
 
 The launcher has already created the run directory and built checklist.json.
 Your job is to produce context-map.json so downstream analysis (the agentic
@@ -1180,6 +1182,7 @@ def _build_validate_prompt(target: Path, agentic_out_dir: Path, validate_dir: Pa
                             selected_count: int,
                             *,
                             allow_unreachable: bool = False) -> str:
+    threat_model = _threat_model_prompt_block(target)
     allow_unreachable_note = ""
     if allow_unreachable:
         allow_unreachable_note = """
@@ -1205,6 +1208,7 @@ Agentic out_dir:      {agentic_out_dir}
 Analysis report:      {analysis_report}
 Selection file:       {selection_file}
 Validate output dir:  {validate_dir}
+{threat_model}
 {allow_unreachable_note}
 Read the findings from {selection_file}. **The launcher has already
 translated them into /validate's FindingsContainer shape** (id, file, line,
@@ -1230,4 +1234,21 @@ Steps:
 4. Write the final validation-report.md into {validate_dir}.
 
 Keep narration brief. Report the per-finding outcomes and exit.
+"""
+
+
+def _threat_model_prompt_block(target: Path) -> str:
+    try:
+        from core.threat_model import load_for_target, prompt_context
+        model = load_for_target(target)
+    except Exception:
+        model = None
+    if not model:
+        return ""
+    return f"""
+{prompt_context(model)}
+
+Use this as operator-owned context, not source-code evidence. Prioritise the
+focus areas and verification expectations, respect explicit out-of-scope
+classes, and still prove claims from code or oracle-backed validation.
 """
