@@ -102,10 +102,16 @@ def _materialise_threat_model_phase(
         return summary
 
     from core.threat_model import (
+        diff_context_map,
+        enrich_from_context_map,
         from_context_map,
+        link_verified_outcomes,
+        lint_model,
         load_model,
+        project_threat_model_report_path,
         project_threat_model_paths,
         save_model,
+        save_report,
     )
 
     project = None
@@ -134,14 +140,29 @@ def _materialise_threat_model_phase(
 
     existing_model = load_model(json_path) if project_backed else None
     if existing_model is not None and not refresh:
-        model = existing_model
+        model = enrich_from_context_map(existing_model, context_map)
+        save_model(model, json_path, markdown_path)
         summary["model_preserved"] = True
         summary["model_refreshed"] = False
+        summary["model_migrated"] = True
     else:
         model = from_context_map(project, context_map)
         save_model(model, json_path, markdown_path)
         summary["model_preserved"] = False
         summary["model_refreshed"] = True
+        summary["model_migrated"] = False
+
+    linked_outcomes = 0
+    try:
+        from core.verified_outcome import collect_outcomes
+        project_root = Path(project.output_dir) if project_backed else None
+        outcomes = collect_outcomes(out_dir, project_root=project_root)
+        linked_outcomes = len(outcomes)
+        if outcomes:
+            link_verified_outcomes(model, outcomes)
+            save_model(model, json_path, markdown_path)
+    except Exception as e:
+        logger.debug(f"Threat model verified-outcome linking skipped: {e}")
 
     if mgr is not None and hasattr(project, "name") and hasattr(project, "to_dict"):
         try:
@@ -153,6 +174,21 @@ def _materialise_threat_model_phase(
 
     candidate_sarif = out_dir / "threat-model-candidates.sarif"
     candidate_count = _write_threat_model_candidate_sarif(context_map, candidate_sarif)
+    lint = lint_model(model)
+    drift = diff_context_map(model, context_map)
+    report_path = (
+        project_threat_model_report_path(project)
+        if project_backed else out_dir / "threat-model-report.md"
+    )
+    if project_backed and configured_path:
+        report_path = json_path.with_name("threat-model-report.md")
+    save_report(model, report_path, lint=lint, drift=drift)
+    lint_path = out_dir / "threat-model-lint.json"
+    drift_path = out_dir / "threat-model-drift.json"
+    threats_path = out_dir / "threats.json"
+    save_json(lint_path, {"issues": lint})
+    save_json(drift_path, drift)
+    save_json(threats_path, {"threats": model.threats})
 
     summary.update({
         "completed": True,
@@ -164,6 +200,16 @@ def _materialise_threat_model_phase(
         "generated_candidates": candidate_count,
         "threat_model_json": str(json_path),
         "threat_model_markdown": str(markdown_path),
+        "threat_model_report": str(report_path),
+        "threat_model_lint": str(lint_path),
+        "threat_model_drift": str(drift_path),
+        "threats": str(threats_path),
+        "threats_count": len(model.threats),
+        "controls_count": len(model.controls),
+        "evidence_count": len(model.evidence),
+        "lint_issues": len(lint),
+        "drifted": bool(drift.get("is_drifted")),
+        "verified_outcomes_linked": linked_outcomes,
         "candidate_sarif": str(candidate_sarif) if candidate_count else None,
         "context_map": str(context_map_path),
     })
@@ -290,7 +336,16 @@ def _print_threat_model_phase(summary: dict) -> None:
     print(f"  unchecked_flows:      {summary.get('unchecked_flows', 0)}")
     print(f"  hardcoded_secrets:    {summary.get('hardcoded_secrets', 0)}")
     print(f"  generated_candidates: {summary.get('generated_candidates', 0)}")
+    print(f"  threats:              {summary.get('threats_count', 0)}")
+    print(f"  controls:             {summary.get('controls_count', 0)}")
+    print(f"  evidence:             {summary.get('evidence_count', 0)}")
+    print(f"  lint_issues:          {summary.get('lint_issues', 0)}")
+    print(f"  drifted:              {'yes' if summary.get('drifted') else 'no'}")
+    if summary.get("model_migrated"):
+        print("  model_migrated:       yes")
     print(f"  model:                {summary.get('threat_model_json')}")
+    if summary.get("threat_model_report"):
+        print(f"  report:               {summary.get('threat_model_report')}")
     if summary.get("reused_context_map"):
         print(f"  reused_context_map:   {summary.get('context_map')}")
     if summary.get("stale_files"):
@@ -1595,6 +1650,10 @@ Examples:
                 "outputs": {
                     "threat_model_json": threat_model_phase.get("threat_model_json"),
                     "threat_model_markdown": threat_model_phase.get("threat_model_markdown"),
+                    "threat_model_report": threat_model_phase.get("threat_model_report"),
+                    "threat_model_lint": threat_model_phase.get("threat_model_lint"),
+                    "threat_model_drift": threat_model_phase.get("threat_model_drift"),
+                    "threats": threat_model_phase.get("threats"),
                     "threat_model_summary": str(out_dir / "threat-model-summary.json"),
                     "threat_model_candidates": threat_model_phase.get("candidate_sarif"),
                     "context_map": threat_model_phase.get("context_map"),
@@ -2373,6 +2432,10 @@ Examples:
             "sarif_files": [str(f) for f in sarif_files],
             "threat_model_json": threat_model_phase.get("threat_model_json"),
             "threat_model_markdown": threat_model_phase.get("threat_model_markdown"),
+            "threat_model_report": threat_model_phase.get("threat_model_report"),
+            "threat_model_lint": threat_model_phase.get("threat_model_lint"),
+            "threat_model_drift": threat_model_phase.get("threat_model_drift"),
+            "threats": threat_model_phase.get("threats"),
             "threat_model_summary": str(out_dir / "threat-model-summary.json") if threat_model_phase.get("completed") else None,
             "threat_model_candidates": threat_model_phase.get("candidate_sarif"),
             "sca_findings": str(sca_findings_path) if sca_findings_path and sca_findings_path.exists() else None,
@@ -2925,6 +2988,14 @@ Examples:
         output_files.append(outputs["threat_model_json"])
     if outputs.get("threat_model_markdown"):
         output_files.append(outputs["threat_model_markdown"])
+    if outputs.get("threat_model_report"):
+        output_files.append(outputs["threat_model_report"])
+    if outputs.get("threat_model_lint"):
+        output_files.append(outputs["threat_model_lint"])
+    if outputs.get("threat_model_drift"):
+        output_files.append(outputs["threat_model_drift"])
+    if outputs.get("threats"):
+        output_files.append(outputs["threats"])
     sarif_files = outputs.get("sarif_files", [])
     combined = [sf for sf in sarif_files if "combined" in sf]
     if combined:
@@ -3010,11 +3081,22 @@ def _build_threat_model_report_section(summary):
         f"- Unchecked flows: **{summary.get('unchecked_flows', 0)}**",
         f"- Hardcoded secrets: **{summary.get('hardcoded_secrets', 0)}**",
         f"- Generated candidates: **{summary.get('generated_candidates', 0)}**",
+        f"- Threats: **{summary.get('threats_count', 0)}**",
+        f"- Controls: **{summary.get('controls_count', 0)}**",
+        f"- Evidence records: **{summary.get('evidence_count', 0)}**",
+        f"- Lint issues: **{summary.get('lint_issues', 0)}**",
+        f"- Drifted: **{'yes' if summary.get('drifted') else 'no'}**",
     ]
     if summary.get("threat_model_json"):
         lines.append(f"- Model: `{summary['threat_model_json']}`")
     if summary.get("threat_model_markdown"):
         lines.append(f"- Markdown: `{summary['threat_model_markdown']}`")
+    if summary.get("threat_model_report"):
+        lines.append(f"- Report: `{summary['threat_model_report']}`")
+    if summary.get("threat_model_lint"):
+        lines.append(f"- Lint: `{summary['threat_model_lint']}`")
+    if summary.get("threat_model_drift"):
+        lines.append(f"- Drift: `{summary['threat_model_drift']}`")
     if summary.get("candidate_sarif"):
         lines.append(f"- Validation handoff: `{summary['candidate_sarif']}`")
     if summary.get("reused_context_map"):

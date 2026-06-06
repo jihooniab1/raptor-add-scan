@@ -10,15 +10,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from core.json import load_json, save_json
 from core.security.log_sanitisation import escape_nonprintable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 JSON_FILENAME = "threat-model.json"
 MARKDOWN_FILENAME = "THREAT_MODEL.md"
+REPORT_FILENAME = "threat-model-report.md"
 
 
 @dataclass
@@ -44,6 +46,16 @@ class ThreatModel:
     known_bug_shapes: list[str] = field(default_factory=list)
     verification_expectations: list[str] = field(default_factory=list)
     patch_validation_expectations: list[str] = field(default_factory=list)
+    methodology: list[str] = field(default_factory=list)
+    domain_packs: list[str] = field(default_factory=list)
+    actors: list[dict[str, Any]] = field(default_factory=list)
+    trust_zones: list[dict[str, Any]] = field(default_factory=list)
+    data_flows: list[dict[str, Any]] = field(default_factory=list)
+    threats: list[dict[str, Any]] = field(default_factory=list)
+    controls: list[dict[str, Any]] = field(default_factory=list)
+    assumptions: list[dict[str, Any]] = field(default_factory=list)
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    accepted_risks: list[dict[str, Any]] = field(default_factory=list)
     notes: str = ""
     source: str = "operator"
     created_at: str = field(
@@ -71,6 +83,16 @@ class ThreatModel:
             "known_bug_shapes": list(self.known_bug_shapes),
             "verification_expectations": list(self.verification_expectations),
             "patch_validation_expectations": list(self.patch_validation_expectations),
+            "methodology": list(self.methodology),
+            "domain_packs": list(self.domain_packs),
+            "actors": _copy_records(self.actors),
+            "trust_zones": _copy_records(self.trust_zones),
+            "data_flows": _copy_records(self.data_flows),
+            "threats": _copy_records(self.threats),
+            "controls": _copy_records(self.controls),
+            "assumptions": _copy_records(self.assumptions),
+            "evidence": _copy_records(self.evidence),
+            "accepted_risks": _copy_records(self.accepted_risks),
             "notes": self.notes,
             "source": self.source,
             "created_at": self.created_at,
@@ -99,6 +121,16 @@ class ThreatModel:
             known_bug_shapes=_list("known_bug_shapes"),
             verification_expectations=_list("verification_expectations"),
             patch_validation_expectations=_list("patch_validation_expectations"),
+            methodology=_list("methodology"),
+            domain_packs=_list("domain_packs"),
+            actors=_records("actors", data),
+            trust_zones=_records("trust_zones", data),
+            data_flows=_records("data_flows", data),
+            threats=_records("threats", data),
+            controls=_records("controls", data),
+            assumptions=_records("assumptions", data),
+            evidence=_records("evidence", data),
+            accepted_risks=_records("accepted_risks", data),
             notes=str(data.get("notes") or ""),
             source=str(data.get("source") or "operator"),
             created_at=str(data.get("created_at") or now),
@@ -110,6 +142,11 @@ def project_threat_model_paths(project: Any) -> tuple[Path, Path]:
     """Return ``(json_path, markdown_path)`` for a project-like object."""
     output = Path(project.output_dir)
     return output / JSON_FILENAME, output / MARKDOWN_FILENAME
+
+
+def project_threat_model_report_path(project: Any) -> Path:
+    """Return the default project threat-model report path."""
+    return Path(project.output_dir) / REPORT_FILENAME
 
 
 def blank_for_project(project: Any) -> ThreatModel:
@@ -152,6 +189,80 @@ def blank_for_project(project: Any) -> ThreatModel:
             "Run the relevant test/build path",
             "Run a short re-attack or variant-hunt pass for high-impact fixes",
         ],
+        methodology=[
+            "Map assets, actors, entry points, data flows, trust boundaries, threats, controls, assumptions, and evidence",
+            "Use STRIDE-style prompts for each trust-boundary crossing, then let RAPTOR oracles confirm or refute",
+            "Treat the model as a living ledger: confirmed evidence changes threat state, not just the report wording",
+        ],
+        domain_packs=["web", "api", "sca", "native", "cloud", "ai"],
+        actors=[
+            {
+                "id": "ACT-001",
+                "name": "External attacker or untrusted caller",
+                "trust": "untrusted",
+                "description": "Any actor able to influence external inputs, files, messages, dependencies, or HTTP requests.",
+            },
+            {
+                "id": "ACT-002",
+                "name": "Operator or maintainer",
+                "trust": "trusted",
+                "description": "A legitimate maintainer or deployment operator. Abuse by already-compromised operators is out of scope unless documented.",
+            },
+        ],
+        trust_zones=[
+            {
+                "id": "TZ-001",
+                "name": "Untrusted input",
+                "description": "External requests, files, messages, dependency metadata, and user-controlled payloads.",
+            },
+            {
+                "id": "TZ-002",
+                "name": "Application trust boundary",
+                "description": "Application code, framework middleware, parsers, business logic, and internal service calls.",
+            },
+            {
+                "id": "TZ-003",
+                "name": "Sensitive execution or data",
+                "description": "Secrets, privileged operations, filesystem, database, shell, native memory, and release pipeline state.",
+            },
+        ],
+        controls=[
+            {
+                "id": "CTRL-001",
+                "name": "Input validation and canonicalisation",
+                "type": "preventive",
+                "status": "expected",
+                "tests": ["Trace untrusted input to parsers and sensitive sinks"],
+            },
+            {
+                "id": "CTRL-002",
+                "name": "Authentication and authorisation gates",
+                "type": "preventive",
+                "status": "expected",
+                "tests": ["Verify privileged routes and operations reject unauthorised callers"],
+            },
+            {
+                "id": "CTRL-003",
+                "name": "Oracle-backed validation",
+                "type": "detective",
+                "status": "expected",
+                "tests": ["Confirm or refute high-risk findings with sandbox, CodeQL, fuzzing, web, or SCA evidence"],
+            },
+        ],
+        assumptions=[
+            {
+                "id": "ASM-001",
+                "statement": "External inputs should be treated as hostile until a boundary check is proven.",
+                "status": "active",
+                "evidence_ids": [],
+            },
+            {
+                "id": "ASM-002",
+                "statement": "Claims such as admin-only, internal-only, or unreachable need evidence before they lower risk.",
+                "status": "active",
+                "evidence_ids": [],
+            },
+        ],
     )
 
 
@@ -171,6 +282,7 @@ def from_context_map(project: Any, context_map: dict[str, Any]) -> ThreatModel:
         context_map.get("sink_details") or context_map.get("sinks") or [],
         default_label="sink",
     )
+    model.domain_packs = _derive_domain_packs(context_map)
     model.focus_areas = derive_focus_areas(model.entry_points, sinks)
     unchecked_flows = _summaries_from_unchecked_flows(
         context_map.get("unchecked_flows") or [],
@@ -191,6 +303,53 @@ def from_context_map(project: Any, context_map: dict[str, Any]) -> ThreatModel:
             f"Trace attacker-controlled entry points into sink: {s}"
             for s in sinks[:12]
         )
+    model.data_flows = _data_flows_from_context_map(context_map)
+    model.threats = _threats_from_context_map(context_map, model.data_flows)
+    model.controls = _merge_records(model.controls, _controls_from_context_map(context_map))
+    model.evidence = _merge_records(model.evidence, _evidence_from_context_map(context_map))
+    model.updated_at = datetime.now(timezone.utc).isoformat()
+    return model
+
+
+def enrich_from_context_map(model: ThreatModel, context_map: dict[str, Any]) -> ThreatModel:
+    """Backfill v2 structure from ``context-map.json`` without erasing prose.
+
+    Existing project threat models are operator-owned, so refresh-less runs
+    must not overwrite the prose lists or summary. They should still gain the
+    structured ledger fields introduced in v2, otherwise old project models
+    never get threats, controls, drift/report quality, or evidence linkage.
+    """
+    model.version = SCHEMA_VERSION
+    seed = blank_for_project(type("_ThreatProject", (), {
+        "name": model.project_name,
+        "target": model.target,
+        "output_dir": ".",
+    })())
+    if not model.domain_packs:
+        model.domain_packs = _derive_domain_packs(context_map)
+    if not model.methodology:
+        model.methodology = seed.methodology
+
+    derived_flows = _data_flows_from_context_map(context_map)
+    if derived_flows:
+        model.data_flows = _merge_records(model.data_flows, derived_flows)
+
+    derived_threats = _threats_from_context_map(context_map, derived_flows)
+    if derived_threats:
+        model.threats = _merge_records(model.threats, derived_threats)
+
+    if not model.controls:
+        model.controls = seed.controls
+    model.controls = _merge_records(model.controls, _controls_from_context_map(context_map))
+    model.evidence = _merge_records(model.evidence, _evidence_from_context_map(context_map))
+
+    if not model.actors:
+        model.actors = seed.actors
+    if not model.trust_zones:
+        model.trust_zones = seed.trust_zones
+    if not model.assumptions:
+        model.assumptions = seed.assumptions
+
     model.updated_at = datetime.now(timezone.utc).isoformat()
     return model
 
@@ -219,6 +378,21 @@ def save_model(model: ThreatModel, json_path: Path, markdown_path: Path) -> None
     markdown_path.write_text(render_markdown(model), encoding="utf-8")
 
 
+def save_report(
+    model: ThreatModel,
+    report_path: Path,
+    *,
+    lint: Optional[list[dict[str, Any]]] = None,
+    drift: Optional[dict[str, Any]] = None,
+) -> None:
+    """Write the richer operator report for a model."""
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        render_report(model, lint=lint, drift=drift),
+        encoding="utf-8",
+    )
+
+
 def render_markdown(model: ThreatModel) -> str:
     """Render an operator-editable ``THREAT_MODEL.md``."""
     sections = [
@@ -244,10 +418,115 @@ def render_markdown(model: ThreatModel) -> str:
         _render_list("Known Bug Shapes", model.known_bug_shapes),
         _render_list("Verification Expectations", model.verification_expectations),
         _render_list("Patch Validation Expectations", model.patch_validation_expectations),
+        _render_list("Methodology", model.methodology),
+        _render_list("Domain Packs", model.domain_packs),
+        _render_records("Actors", model.actors, ("id", "name", "trust", "description")),
+        _render_records("Trust Zones", model.trust_zones, ("id", "name", "description")),
+        _render_records("Data Flows", model.data_flows, ("id", "source", "sink", "boundary", "risk")),
+        _render_records("Threats", model.threats, ("id", "title", "status", "severity", "risk_score", "validation")),
+        _render_records("Controls", model.controls, ("id", "name", "type", "status")),
+        _render_records("Assumptions", model.assumptions, ("id", "statement", "status", "owner", "expires")),
+        _render_records("Evidence", model.evidence, ("id", "oracle", "status", "summary", "reproducible")),
+        _render_records("Accepted Risks", model.accepted_risks, ("id", "threat_id", "owner", "accepted_until", "reason")),
     ]
     if model.notes.strip():
         sections.extend(["## Notes", "", model.notes.strip(), ""])
     return "\n".join(sections).rstrip() + "\n"
+
+
+def render_report(
+    model: ThreatModel,
+    *,
+    lint: Optional[list[dict[str, Any]]] = None,
+    drift: Optional[dict[str, Any]] = None,
+) -> str:
+    """Render a higher-signal threat-model report for assessment output."""
+    lint = lint if lint is not None else lint_model(model)
+    top_threats = sorted(
+        model.threats,
+        key=lambda t: int(t.get("risk_score") or 0),
+        reverse=True,
+    )[:10]
+    lines = []
+    logo = _read_raptor_logo()
+    if logo:
+        lines.extend(["```", logo, "```", ""])
+    lines.extend([
+        "# Threat Model Report",
+        "",
+        f"Project: {model.project_name}",
+        f"Target: {model.target}",
+        f"Updated: {model.updated_at}",
+        "",
+        "## Executive View",
+        "",
+        f"- Assets: {len(model.assets)}",
+        f"- Entry points: {len(model.entry_points)}",
+        f"- Trust boundaries: {len(model.trust_boundaries) + len(model.trust_zones)}",
+        f"- Data flows: {len(model.data_flows)}",
+        f"- Threats: {len(model.threats)}",
+        f"- Controls: {len(model.controls)}",
+        f"- Evidence records: {len(model.evidence)}",
+        f"- Open quality issues: {len([i for i in lint if i.get('severity') in ('error', 'warning')])}",
+        "",
+        "## Top Threats",
+        "",
+    ])
+    if top_threats:
+        for threat in top_threats:
+            lines.append(
+                "- {id} [{status}] risk={risk} severity={severity}: {title}".format(
+                    id=threat.get("id", "?"),
+                    status=threat.get("status", "needs_evidence"),
+                    risk=threat.get("risk_score", 0),
+                    severity=threat.get("severity", "unknown"),
+                    title=threat.get("title", "Untitled threat"),
+                )
+            )
+    else:
+        lines.append("- No threats recorded yet.")
+    lines.extend(["", "## Evidence Loop", ""])
+    if model.evidence:
+        for ev in model.evidence[:20]:
+            lines.append(
+                "- {id} [{oracle}/{status}] {summary}".format(
+                    id=ev.get("id", "?"),
+                    oracle=ev.get("oracle", "?"),
+                    status=ev.get("status", "?"),
+                    summary=ev.get("summary", "no summary"),
+                )
+            )
+    else:
+        lines.append("- No oracle evidence linked yet.")
+    lines.extend(["", "## Quality Gates", ""])
+    if lint:
+        for issue in lint:
+            lines.append(
+                "- {severity}: {message}".format(
+                    severity=str(issue.get("severity", "info")).title(),
+                    message=issue.get("message", ""),
+                )
+            )
+    else:
+        lines.append("- No quality issues found.")
+    if drift:
+        lines.extend(["", "## Drift", ""])
+        for key in ("new_entry_points", "missing_entry_points", "new_trust_boundaries",
+                    "missing_trust_boundaries", "new_unchecked_flows"):
+            values = drift.get(key) or []
+            lines.append(f"- {key}: {len(values)}")
+            for value in values[:8]:
+                lines.append(f"  - {value}")
+    lines.extend(["", "## Mermaid", "", "```mermaid", "flowchart LR"])
+    for flow in model.data_flows[:25]:
+        src = _mermaid_id(str(flow.get("source") or flow.get("id") or "source"))
+        sink = _mermaid_id(str(flow.get("sink") or "sink"))
+        label = str(flow.get("id") or "")
+        lines.append(f'  {src}["{_mermaid_label(flow.get("source") or "Source")}"] -->|"{_mermaid_label(label)}"| {sink}["{_mermaid_label(flow.get("sink") or "Sink")}"]')
+    if not model.data_flows:
+        lines.append('  A["No data flows recorded"]')
+    lines.extend(["```", ""])
+    return "\n".join(lines)
 
 
 def prompt_context(model: ThreatModel, *, max_items: int = 8) -> str:
@@ -266,10 +545,148 @@ def prompt_context(model: ThreatModel, *, max_items: int = 8) -> str:
         ("Known bug shapes", model.known_bug_shapes),
         ("Verification expectations", model.verification_expectations),
         ("Patch validation expectations", model.patch_validation_expectations),
+        ("Methodology", model.methodology),
+        ("Domain packs", model.domain_packs),
     ):
         if values:
             lines.append(f"- {label}: {escape_nonprintable('; '.join(values[:max_items]))}")
+    if model.threats:
+        rendered = []
+        for threat in model.threats[:max_items]:
+            rendered.append(
+                "{id} {status} risk={risk}: {title}".format(
+                    id=threat.get("id", "?"),
+                    status=threat.get("status", "needs_evidence"),
+                    risk=threat.get("risk_score", 0),
+                    title=threat.get("title", "Untitled threat"),
+                )
+            )
+        lines.append(f"- Threat ledger: {escape_nonprintable('; '.join(rendered))}")
+    if model.controls:
+        rendered = [
+            f"{c.get('id', '?')} {c.get('status', 'unknown')}: {c.get('name', 'control')}"
+            for c in model.controls[:max_items]
+        ]
+        lines.append(f"- Control expectations: {escape_nonprintable('; '.join(rendered))}")
     return "\n".join(lines)
+
+
+def lint_model(model: ThreatModel) -> list[dict[str, Any]]:
+    """Return quality-gate issues for a model."""
+    issues: list[dict[str, Any]] = []
+    if not model.assets:
+        _issue(issues, "error", "assets", "No assets documented.")
+    if not model.untrusted_inputs and not any(a.get("trust") == "untrusted" for a in model.actors):
+        _issue(issues, "warning", "untrusted_inputs", "No untrusted inputs or untrusted actors documented.")
+    if not model.entry_points and not model.data_flows:
+        _issue(issues, "error", "entry_points", "No entry points or data flows recorded.")
+    if not model.trust_boundaries and not model.trust_zones:
+        _issue(issues, "warning", "trust_boundaries", "No trust boundaries or trust zones recorded.")
+    if not model.threats:
+        _issue(issues, "error", "threats", "No native threat records exist yet.")
+    if not model.controls:
+        _issue(issues, "warning", "controls", "No controls mapped to threats.")
+
+    control_ids = {str(c.get("id")) for c in model.controls if c.get("id")}
+    evidence_ids = {str(e.get("id")) for e in model.evidence if e.get("id")}
+    accepted_by_threat = {
+        str(r.get("threat_id")): r for r in model.accepted_risks if r.get("threat_id")
+    }
+    for threat in model.threats:
+        tid = str(threat.get("id") or "?")
+        score = int(threat.get("risk_score") or 0)
+        status = str(threat.get("status") or "needs_evidence")
+        controls = [str(c) for c in threat.get("control_ids") or []]
+        evidence = [str(e) for e in threat.get("evidence_ids") or []]
+        if score >= 70 and not threat.get("validation"):
+            _issue(issues, "error", f"threats.{tid}", f"High-risk threat {tid} has no validation plan.")
+        if score >= 60 and not any(c in control_ids for c in controls):
+            _issue(issues, "warning", f"threats.{tid}", f"Threat {tid} is not linked to any known control.")
+        if status in {"confirmed", "mitigated", "refuted"} and not any(e in evidence_ids for e in evidence):
+            _issue(issues, "warning", f"threats.{tid}", f"Threat {tid} has status {status} without linked evidence.")
+        if status == "accepted":
+            risk = accepted_by_threat.get(tid)
+            if not risk:
+                _issue(issues, "error", f"threats.{tid}", f"Threat {tid} is accepted but has no accepted-risk record.")
+    for risk in model.accepted_risks:
+        rid = str(risk.get("id") or "?")
+        if not risk.get("owner"):
+            _issue(issues, "error", f"accepted_risks.{rid}", f"Accepted risk {rid} has no owner.")
+        if not risk.get("accepted_until"):
+            _issue(issues, "warning", f"accepted_risks.{rid}", f"Accepted risk {rid} has no review date.")
+    for assumption in model.assumptions:
+        aid = str(assumption.get("id") or "?")
+        status = str(assumption.get("status") or "active")
+        if status == "active" and not assumption.get("evidence_ids"):
+            _issue(issues, "info", f"assumptions.{aid}", f"Assumption {aid} has no evidence yet.")
+    return issues
+
+
+def diff_context_map(model: ThreatModel, context_map: dict[str, Any]) -> dict[str, Any]:
+    """Compare a model with a fresh ``context-map.json``."""
+    fresh_entries = set(_summaries_from_entries(
+        context_map.get("entry_points") or context_map.get("sources") or [],
+        default_label="entry",
+    ))
+    fresh_boundaries = set(_summaries_from_entries(
+        context_map.get("trust_boundaries") or [],
+        default_label="boundary",
+    ))
+    fresh_flows = set(_summaries_from_unchecked_flows(
+        context_map.get("unchecked_flows") or [],
+        context_map.get("entry_points") or [],
+        context_map.get("sink_details") or [],
+    ))
+    model_entries = set(model.entry_points)
+    model_boundaries = set(model.trust_boundaries)
+    model_flows = set(model.known_bug_shapes)
+    return {
+        "new_entry_points": sorted(fresh_entries - model_entries),
+        "missing_entry_points": sorted(model_entries - fresh_entries),
+        "new_trust_boundaries": sorted(fresh_boundaries - model_boundaries),
+        "missing_trust_boundaries": sorted(model_boundaries - fresh_boundaries),
+        "new_unchecked_flows": sorted(fresh_flows - model_flows),
+        "is_drifted": bool(
+            (fresh_entries - model_entries)
+            or (fresh_boundaries - model_boundaries)
+            or (fresh_flows - model_flows)
+        ),
+    }
+
+
+def link_verified_outcomes(model: ThreatModel, outcomes: Iterable[Any]) -> ThreatModel:
+    """Attach oracle outcomes to the threat ledger in-place."""
+    for outcome in outcomes:
+        data = outcome.to_dict() if hasattr(outcome, "to_dict") else dict(outcome)
+        evidence_id = _stable_id("EVD", [
+            data.get("oracle"),
+            data.get("status"),
+            data.get("finding_id"),
+            data.get("timestamp"),
+        ])
+        ev = {
+            "id": evidence_id,
+            "oracle": data.get("oracle"),
+            "status": data.get("status"),
+            "finding_id": data.get("finding_id"),
+            "cwe_id": data.get("cwe_id"),
+            "file": data.get("file"),
+            "reproducible": bool(data.get("reproducible")),
+            "summary": _outcome_summary(data),
+            "raw": data.get("evidence") or {},
+        }
+        model.evidence = _merge_records(model.evidence, [ev])
+        for threat in model.threats:
+            if _outcome_matches_threat(data, threat):
+                evidence_ids = set(str(e) for e in threat.get("evidence_ids") or [])
+                evidence_ids.add(evidence_id)
+                threat["evidence_ids"] = sorted(evidence_ids)
+                if data.get("status") == "verified":
+                    threat["status"] = "confirmed"
+                elif data.get("status") == "refuted":
+                    threat["status"] = "refuted"
+    model.updated_at = datetime.now(timezone.utc).isoformat()
+    return model
 
 
 def load_for_target(target: Path) -> Optional[ThreatModel]:
@@ -300,6 +717,161 @@ def _render_list(title: str, values: list[str]) -> str:
         lines.append("- TBC")
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_records(title: str, records: list[dict[str, Any]], keys: tuple[str, ...]) -> str:
+    lines = [f"## {title}", ""]
+    if not records:
+        lines.append("- TBC")
+        lines.append("")
+        return "\n".join(lines)
+    for record in records:
+        parts = []
+        for key in keys:
+            value = record.get(key)
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, list):
+                value = ", ".join(str(v) for v in value)
+            parts.append(f"{key}={value}")
+        lines.append(f"- {'; '.join(parts) if parts else record}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _issue(issues: list[dict[str, Any]], severity: str, field: str, message: str) -> None:
+    issues.append({"severity": severity, "field": field, "message": message})
+
+
+def _derive_domain_packs(context_map: dict[str, Any]) -> list[str]:
+    text = " ".join(
+        str(v).lower()
+        for v in (
+            context_map.get("frameworks"),
+            context_map.get("languages"),
+            context_map.get("entry_points"),
+            context_map.get("sink_details"),
+            context_map.get("sinks"),
+        )
+    )
+    packs = ["web", "api", "sca"]
+    if any(token in text for token in ("malloc", "strcpy", "memcpy", "buffer", "asan", "native")):
+        packs.append("native")
+    if any(token in text for token in ("iam", "s3", "lambda", "gcp", "azure", "aws", "cloud")):
+        packs.append("cloud")
+    if any(token in text for token in ("prompt", "llm", "model", "embedding", "agent")):
+        packs.append("ai")
+    return _dedup(packs)
+
+
+def _data_flows_from_context_map(context_map: dict[str, Any]) -> list[dict[str, Any]]:
+    entries = context_map.get("entry_points") or []
+    sinks = context_map.get("sink_details") or context_map.get("sinks") or []
+    entries_by_id = _records_by_id(entries)
+    sinks_by_id = _records_by_id(sinks)
+    out: list[dict[str, Any]] = []
+    for i, flow in enumerate(context_map.get("unchecked_flows") or []):
+        if not isinstance(flow, dict):
+            continue
+        entry_id = str(flow.get("entry_point") or "")
+        sink_id = str(flow.get("sink") or "")
+        entry = entries_by_id.get(entry_id, {})
+        sink = sinks_by_id.get(sink_id, {})
+        out.append({
+            "id": str(flow.get("id") or f"DF-{i + 1:03d}"),
+            "source": _entry_title(entry, entry_id),
+            "sink": _sink_title(sink, sink_id),
+            "entry_point_id": entry_id,
+            "sink_id": sink_id,
+            "boundary": flow.get("missing_boundary") or flow.get("boundary") or "No checked boundary recorded",
+            "risk": flow.get("severity") or "medium",
+            "attacker_controlled": True,
+            "source_location": _location(entry),
+            "sink_location": _location(sink),
+        })
+    return out
+
+
+def _threats_from_context_map(
+    context_map: dict[str, Any],
+    data_flows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    threats: list[dict[str, Any]] = []
+    for i, flow in enumerate(data_flows):
+        severity = _normalise_severity(flow.get("risk"))
+        score = _risk_score(severity, has_trust_boundary=True)
+        category = _category_from_sink(str(flow.get("sink") or ""))
+        threats.append({
+            "id": f"T-{i + 1:03d}",
+            "title": f"Unchecked flow from {flow.get('source')} to {flow.get('sink')}",
+            "category": category,
+            "stride": _stride_for_category(category),
+            "status": "needs_evidence",
+            "severity": severity,
+            "risk_score": score,
+            "data_flow_ids": [flow.get("id")],
+            "entry_point_id": flow.get("entry_point_id"),
+            "sink_id": flow.get("sink_id"),
+            "control_ids": _controls_for_category(category),
+            "evidence_ids": [],
+            "validation": "Trace the flow and confirm/refute with the strongest available oracle: web probe, sandbox replay, CodeQL path proof, SCA reachability, or fuzz witness.",
+            "source": "context-map.unchecked_flows",
+        })
+    offset = len(threats)
+    for j, secret in enumerate(context_map.get("hardcoded_secrets") or []):
+        if not isinstance(secret, dict):
+            continue
+        threats.append({
+            "id": f"T-{offset + j + 1:03d}",
+            "title": f"Hardcoded secret or backdoor credential: {_entry_title(secret, 'secret')}",
+            "category": "secret_exposure",
+            "stride": ["information_disclosure", "elevation_of_privilege"],
+            "status": "needs_evidence",
+            "severity": "high",
+            "risk_score": 75,
+            "data_flow_ids": [],
+            "entry_point_id": None,
+            "sink_id": None,
+            "control_ids": ["CTRL-003"],
+            "evidence_ids": [],
+            "validation": "Confirm whether the secret is live, reachable, and exposed to an attacker-controlled path; avoid printing sensitive values.",
+            "source": "context-map.hardcoded_secrets",
+        })
+    return threats
+
+
+def _controls_from_context_map(context_map: dict[str, Any]) -> list[dict[str, Any]]:
+    controls = []
+    if context_map.get("trust_boundaries"):
+        controls.append({
+            "id": "CTRL-004",
+            "name": "Trust-boundary enforcement",
+            "type": "preventive",
+            "status": "expected",
+            "tests": ["For each boundary, prove the required auth, parser, validation, or privilege check executes before sensitive sinks"],
+        })
+    if context_map.get("hardcoded_secrets"):
+        controls.append({
+            "id": "CTRL-005",
+            "name": "Secret hygiene",
+            "type": "preventive",
+            "status": "expected",
+            "tests": ["Check secrets are not hardcoded, committed, logged, or returned by diagnostic endpoints"],
+        })
+    return controls
+
+
+def _evidence_from_context_map(context_map: dict[str, Any]) -> list[dict[str, Any]]:
+    evidence = []
+    if context_map.get("unchecked_flows"):
+        evidence.append({
+            "id": "EVD-CONTEXT-001",
+            "oracle": "understand",
+            "status": "candidate",
+            "reproducible": False,
+            "summary": f"/understand mapped {len(context_map.get('unchecked_flows') or [])} unchecked flow candidates.",
+        })
+    return evidence
 
 
 def _summaries_from_entries(entries: Any, *, default_label: str) -> list[str]:
@@ -402,3 +974,200 @@ def _coerce_str_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(v) for v in value if isinstance(v, (str, int, float)) and str(v).strip()]
+
+
+def _copy_records(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [dict(r) for r in records if isinstance(r, dict)]
+
+
+def _records(key: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+    value = data.get(key)
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            out.append(dict(item))
+        elif isinstance(item, str) and item.strip():
+            out.append({"id": _stable_id(key.upper(), [item]), "name": item})
+    return out
+
+
+def _records_by_id(records: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(records, list):
+        return {}
+    return {
+        str(r.get("id")): r
+        for r in records
+        if isinstance(r, dict) and r.get("id")
+    }
+
+
+def _merge_records(
+    left: Iterable[dict[str, Any]],
+    right: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for record in list(left) + list(right):
+        if not isinstance(record, dict):
+            continue
+        key = str(record.get("id") or record.get("name") or record)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(dict(record))
+    return out
+
+
+def _entry_title(entry: dict[str, Any], fallback: str) -> str:
+    if not entry:
+        return fallback or "unknown entry"
+    method = entry.get("method")
+    route = entry.get("path")
+    if method and route:
+        return f"{method} {route}"
+    return str(
+        entry.get("name")
+        or entry.get("operation")
+        or entry.get("id")
+        or fallback
+        or "unknown entry"
+    )
+
+
+def _sink_title(sink: dict[str, Any], fallback: str) -> str:
+    if not sink:
+        return fallback or "unknown sink"
+    sink_type = sink.get("type") or sink.get("name") or sink.get("id") or fallback
+    loc = _location(sink)
+    return f"{sink_type} at {loc}" if loc else str(sink_type)
+
+
+def _location(record: dict[str, Any]) -> str:
+    file = record.get("file") or record.get("path") or record.get("location")
+    if not file:
+        return ""
+    line = record.get("line")
+    return f"{file}:{line}" if line and ":" not in str(file) else str(file)
+
+
+def _normalise_severity(value: Any) -> str:
+    severity = str(value or "medium").lower()
+    if severity in {"critical", "high", "medium", "low", "info"}:
+        return severity
+    if severity in {"error", "fatal"}:
+        return "high"
+    if severity in {"warning", "warn"}:
+        return "medium"
+    return "medium"
+
+
+def _risk_score(severity: str, *, has_trust_boundary: bool) -> int:
+    base = {
+        "critical": 90,
+        "high": 75,
+        "medium": 50,
+        "low": 25,
+        "info": 10,
+    }.get(_normalise_severity(severity), 50)
+    return min(100, base + (5 if has_trust_boundary else 0))
+
+
+def _category_from_sink(sink: str) -> str:
+    s = sink.lower()
+    if any(x in s for x in ("shell", "command", "subprocess", "exec", "system")):
+        return "command_execution"
+    if any(x in s for x in ("sql", "query", "database", "db")):
+        return "sql_injection"
+    if any(x in s for x in ("template", "jinja", "ssti")):
+        return "server_side_template_injection"
+    if any(x in s for x in ("path", "file", "open(", "read", "write")):
+        return "path_traversal"
+    if any(x in s for x in ("secret", "token", "credential", "env")):
+        return "secret_exposure"
+    if any(x in s for x in ("malloc", "memcpy", "strcpy", "buffer", "free")):
+        return "memory_corruption"
+    return "unchecked_trust_boundary"
+
+
+def _stride_for_category(category: str) -> list[str]:
+    return {
+        "command_execution": ["tampering", "elevation_of_privilege"],
+        "sql_injection": ["tampering", "information_disclosure"],
+        "server_side_template_injection": ["tampering", "elevation_of_privilege"],
+        "path_traversal": ["information_disclosure", "tampering"],
+        "secret_exposure": ["information_disclosure", "elevation_of_privilege"],
+        "memory_corruption": ["tampering", "denial_of_service", "elevation_of_privilege"],
+    }.get(category, ["tampering", "information_disclosure"])
+
+
+def _controls_for_category(category: str) -> list[str]:
+    controls = ["CTRL-001", "CTRL-003"]
+    if category in {"command_execution", "sql_injection", "server_side_template_injection",
+                    "path_traversal", "secret_exposure"}:
+        controls.append("CTRL-004")
+    if category == "secret_exposure":
+        controls.append("CTRL-005")
+    return _dedup(controls)
+
+
+def _stable_id(prefix: str, parts: Iterable[Any]) -> str:
+    raw = "|".join(str(p) for p in parts if p not in (None, ""))
+    digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:10]
+    return f"{prefix}-{digest.upper()}"
+
+
+def _outcome_summary(data: dict[str, Any]) -> str:
+    oracle = data.get("oracle") or "oracle"
+    status = data.get("status") or "unknown"
+    finding = data.get("finding_id") or "unkeyed finding"
+    cwe = data.get("cwe_id")
+    file = data.get("file")
+    bits = [f"{oracle} {status} {finding}"]
+    if cwe:
+        bits.append(str(cwe))
+    if file:
+        bits.append(str(file))
+    return " - ".join(bits)
+
+
+def _outcome_matches_threat(data: dict[str, Any], threat: dict[str, Any]) -> bool:
+    finding_id = str(data.get("finding_id") or "")
+    if finding_id and finding_id in {
+        str(threat.get("id") or ""),
+        str(threat.get("entry_point_id") or ""),
+        str(threat.get("sink_id") or ""),
+    }:
+        return True
+    cwe = str(data.get("cwe_id") or "").lower()
+    category = str(threat.get("category") or "").lower()
+    if cwe and (
+        ("78" in cwe and category == "command_execution")
+        or ("89" in cwe and category == "sql_injection")
+        or ("79" in cwe and "template" in category)
+        or ("22" in cwe and category == "path_traversal")
+    ):
+        return True
+    file = str(data.get("file") or "")
+    title = str(threat.get("title") or "")
+    return bool(file and file in title)
+
+
+def _mermaid_id(value: str) -> str:
+    digest = hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"N{digest}"
+
+
+def _mermaid_label(value: Any) -> str:
+    text = escape_nonprintable(str(value))
+    return text.replace("\\", "\\\\").replace('"', '\\"')[:90]
+
+
+def _read_raptor_logo() -> str:
+    try:
+        from core.config import RaptorConfig
+        from core.startup.banner import read_logo
+        return read_logo(RaptorConfig.effective_version())
+    except Exception:
+        return ""

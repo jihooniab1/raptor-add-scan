@@ -141,6 +141,60 @@ def test_threat_model_phase_preserves_existing_project_model_without_refresh(tmp
     assert loaded.focus_areas == ["keep this operator context"]
 
 
+def test_threat_model_phase_migrates_preserved_model_to_v2_ledger(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    target.mkdir()
+    project = _FakeProject("demo", str(target), str(tmp_path / "project-out"))
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    json_path, markdown_path = project_threat_model_paths(project)
+    existing = ThreatModel(
+        version=1,
+        project_name="demo",
+        target=str(target),
+        summary="operator edited model",
+        focus_areas=["keep this operator context"],
+    )
+    save_model(existing, json_path, markdown_path)
+    project.threat_model_path = str(json_path)
+    context_map_path = tmp_path / "context-map.json"
+    context_map_path.write_text(
+        """
+        {
+          "entry_points": [{"id": "EP-001", "name": "GET /hello"}],
+          "sink_details": [{"id": "SINK-001", "type": "subprocess", "file": "hello.py"}],
+          "unchecked_flows": [{
+            "entry_point": "EP-001",
+            "sink": "SINK-001",
+            "severity": "critical"
+          }]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "core.project.project.ProjectManager",
+        lambda: _FakeProjectManager(project, projects_dir),
+    )
+
+    summary = _materialise_threat_model_phase(
+        target=target,
+        out_dir=tmp_path / "run-out",
+        prepass_result=_FakePrepass(context_map_path),
+        refresh=False,
+    )
+
+    assert summary["completed"] is True
+    assert summary["model_preserved"] is True
+    assert summary["model_migrated"] is True
+    assert summary["threats_count"] == 1
+    loaded = load_model(json_path)
+    assert loaded.summary == "operator edited model"
+    assert loaded.focus_areas == ["keep this operator context"]
+    assert loaded.threats[0]["category"] == "command_execution"
+
+
 def test_threat_model_phase_refresh_overwrites_existing_project_model(tmp_path, monkeypatch):
     target = tmp_path / "target"
     target.mkdir()
@@ -177,6 +231,10 @@ def test_threat_model_phase_refresh_overwrites_existing_project_model(tmp_path, 
     assert summary["completed"] is True
     assert summary["model_preserved"] is False
     assert summary["model_refreshed"] is True
+    assert summary["threat_model_report"].endswith("threat-model-report.md")
+    assert summary["threat_model_lint"].endswith("threat-model-lint.json")
+    assert summary["threat_model_drift"].endswith("threat-model-drift.json")
+    assert summary["threats"].endswith("threats.json")
     loaded = load_model(json_path)
     assert loaded.summary != "operator edited model"
     assert "Entry point: POST /login" in loaded.focus_areas

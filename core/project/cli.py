@@ -158,8 +158,10 @@ def main():
     p_tm = sub.add_parser(
         "threat-model",
         help="Manage the project threat-model artefact",
-        usage=("raptor project threat-model [init|show|export|sync] "
-               "[<name>] [--from-context-map <path>] [--json]"),
+        usage=("raptor project threat-model "
+               "[init|show|export|sync|lint|diff|report] "
+               "[<name>] [--from-context-map <path>] [--context-map <path>] "
+               "[--json]"),
         **_F,
     )
     p_tm.add_argument(
@@ -169,6 +171,9 @@ def main():
     p_tm.add_argument(
         "--from-context-map", default=None, metavar="<path>",
         help="Seed init from an /understand context-map.json")
+    p_tm.add_argument(
+        "--context-map", default=None, metavar="<path>",
+        help="Fresh /understand context-map.json for diff/report")
     p_tm.add_argument("--json", dest="json_out", action="store_true", help="Print JSON")
 
     # use
@@ -1020,14 +1025,19 @@ def _handle_threat_model(mgr, args) -> None:
     from core.json import load_json, save_json
     from core.threat_model import (
         blank_for_project,
+        diff_context_map,
         from_context_map,
+        lint_model,
         load_model,
+        project_threat_model_report_path,
         project_threat_model_paths,
         render_markdown,
+        render_report,
         save_model,
+        save_report,
     )
 
-    valid_actions = {"init", "show", "export", "sync"}
+    valid_actions = {"init", "show", "export", "sync", "lint", "diff", "report"}
     if args.action not in valid_actions:
         if args.name is None:
             args.name = args.action
@@ -1049,6 +1059,9 @@ def _handle_threat_model(mgr, args) -> None:
     if getattr(project, "threat_model_path", ""):
         json_path = Path(project.threat_model_path)
         markdown_path = json_path.with_name("THREAT_MODEL.md")
+    report_path = project_threat_model_report_path(project)
+    if getattr(project, "threat_model_path", ""):
+        report_path = json_path.with_name("threat-model-report.md")
 
     if args.action == "init":
         context_map = None
@@ -1086,6 +1099,80 @@ def _handle_threat_model(mgr, args) -> None:
         print(render_markdown(model), end="")
         return
 
+    if args.action == "lint":
+        issues = lint_model(model)
+        if args.json_out:
+            print(json.dumps({"issues": issues}, indent=2, sort_keys=True))
+            return
+        if not issues:
+            print(_green("Threat model lint: no issues found."))
+            return
+        errors = len([i for i in issues if i.get("severity") == "error"])
+        warnings = len([i for i in issues if i.get("severity") == "warning"])
+        info = len([i for i in issues if i.get("severity") == "info"])
+        print(f"Threat model lint: {errors} errors, {warnings} warnings, {info} info")
+        for issue in issues:
+            print(
+                "  - {severity}: {field}: {message}".format(
+                    severity=str(issue.get("severity", "info")).title(),
+                    field=issue.get("field", "?"),
+                    message=issue.get("message", ""),
+                )
+            )
+        return
+
+    if args.action == "diff":
+        if not args.context_map:
+            print(_red("diff needs --context-map <path>"))
+            return
+        context_map = load_json(Path(args.context_map))
+        if not isinstance(context_map, dict):
+            print(_red(f"Not a context-map JSON object: {args.context_map}"))
+            return
+        drift = diff_context_map(model, context_map)
+        if args.json_out:
+            print(json.dumps(drift, indent=2, sort_keys=True))
+            return
+        print(f"Threat model drift: {'yes' if drift.get('is_drifted') else 'no'}")
+        for key in (
+            "new_entry_points",
+            "missing_entry_points",
+            "new_trust_boundaries",
+            "missing_trust_boundaries",
+            "new_unchecked_flows",
+        ):
+            values = drift.get(key) or []
+            print(f"  {key}: {len(values)}")
+            for value in values[:8]:
+                print(f"    - {value}")
+        return
+
+    if args.action == "report":
+        context_map = None
+        if args.context_map:
+            context_map = load_json(Path(args.context_map))
+            if not isinstance(context_map, dict):
+                print(_red(f"Not a context-map JSON object: {args.context_map}"))
+                return
+        lint = lint_model(model)
+        drift = diff_context_map(model, context_map) if context_map else None
+        if args.json_out:
+            print(json.dumps({
+                "report": str(report_path),
+                "lint": lint,
+                "drift": drift,
+            }, indent=2, sort_keys=True))
+            return
+        save_report(model, report_path, lint=lint, drift=drift)
+        print(_green(f"Threat model report written: {report_path}"))
+        print(f"  threats: {len(model.threats)}")
+        print(f"  controls: {len(model.controls)}")
+        print(f"  evidence: {len(model.evidence)}")
+        print(f"  lint issues: {len(lint)}")
+        if drift:
+            print(f"  drift: {'yes' if drift.get('is_drifted') else 'no'}")
+        return
+
     if args.json_out:
         print(json.dumps(model.to_dict(), indent=2, sort_keys=True))
         return
@@ -1096,6 +1183,9 @@ def _handle_threat_model(mgr, args) -> None:
     print(f"Updated: {model.updated_at}")
     print(f"Source: {model.source}")
     print(f"Focus areas: {len(model.focus_areas)}")
+    print(f"Threats: {len(model.threats)}")
+    print(f"Controls: {len(model.controls)}")
+    print(f"Evidence: {len(model.evidence)}")
     for item in model.focus_areas[:8]:
         print(f"  - {item}")
 

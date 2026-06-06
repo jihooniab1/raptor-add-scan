@@ -52,6 +52,10 @@ Commands:
   init [project]             Create a blank project threat model
   export [project]           Print THREAT_MODEL.md
   sync [project]             Re-render THREAT_MODEL.md from JSON
+  lint [project]             Run quality gates over the model
+  diff [project] --context-map <path>
+                             Compare model against a fresh context-map
+  report [project]           Write threat-model-report.md
   build [agentic args]       Run /understand-backed threat-model-only phase
   refresh [agentic args]     Rebuild and overwrite the project model
   use-stale [agentic args]   Build while allowing stale /understand fallback
@@ -77,7 +81,7 @@ case "$cmd" in
     show|status)
         exec "$RAPTOR_DIR/libexec/raptor-project-manager" threat-model show "$@"
         ;;
-    init|export|sync)
+    init|export|sync|lint|diff|report)
         exec "$RAPTOR_DIR/libexec/raptor-project-manager" threat-model "$cmd" "$@"
         ;;
     build)
