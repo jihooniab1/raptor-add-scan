@@ -124,6 +124,7 @@ FILTERS: dict[str, list[str]] = {
         "core/build/**",
         "core/config/**",
         "core/coverage/**",
+        "core/dataflow/structural_validator.py",
         "core/hash/**",
         "core/inventory/**",
         "core/json/**",
