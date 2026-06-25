@@ -1,0 +1,9 @@
+result_dir: "/home/user/men_wanted/agent/KNighter_noapi/test-ext4/results"
+LLVM_dir: "/home/user/men_wanted/agent/llvm-18.1.8"
+checker_nums: 1
+linux_dir: "/home/user/men_wanted/agent/linux"
+key_file: "/home/user/men_wanted/agent/KNighter_noapi/test-ext4/stub_llm_keys.yaml"
+model: "claude-code"
+jobs: 6
+scan_timeout: 600
+scan_commit: "ca78c31af467ffe94b15f6a2e4e1cc1c164db19b"

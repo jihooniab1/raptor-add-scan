@@ -1,0 +1,24 @@
+{
+  "start_time": "2026-06-25T18:48:06.304985",
+  "total_commits": 1,
+  "successful_commits": 0,
+  "results": [
+    {
+      "commit_id": "22f53f08d9eb837ce69b1a07641d414aac8d045f",
+      "commit_type": "Null-Ptr-Deref",
+      "total_checkers": 1,
+      "successful_checkers": 0,
+      "perfect_checkers": 0,
+      "best_tp": -10,
+      "best_tn": -10,
+      "total_time": 97.368456,
+      "errors": [
+        "Error generating checker 0: Failed to run allyesconfig: scripts/Kconfig.include:41: linker 'ld.lld' not found\nmake[2]: *** [scripts/kconfig/Makefile:85: allyesconfig] Error 1\nmake[1]: *** [/home/user/men_wanted/agent/linux/Makefile:747: allyesconfig] Error 2\nmake: *** [Makefile:248: __sub-make] Error 2\n"
+      ],
+      "success_rate": 0.0,
+      "timestamp": "2026-06-25T18:49:43.673782"
+    }
+  ],
+  "end_time": "2026-06-25T18:49:43.673802",
+  "success_rate": 0.0
+}

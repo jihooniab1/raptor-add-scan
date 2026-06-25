@@ -1,0 +1,130 @@
+<html>
+<head>
+<title>linux - scan-build results</title>
+<link type="text/css" rel="stylesheet" href="scanview.css"/>
+<script src="sorttable.js"></script>
+<script language='javascript' type="text/javascript">
+function SetDisplay(RowClass, DisplayVal)
+{
+  var Rows = document.getElementsByTagName("tr");
+  for ( var i = 0 ; i < Rows.length; ++i ) {
+    if (Rows[i].className == RowClass) {
+      Rows[i].style.display = DisplayVal;
+    }
+  }
+}
+
+function CopyCheckedStateToCheckButtons(SummaryCheckButton) {
+  var Inputs = document.getElementsByTagName("input");
+  for ( var i = 0 ; i < Inputs.length; ++i ) {
+    if (Inputs[i].type == "checkbox") {
+      if(Inputs[i] != SummaryCheckButton) {
+        Inputs[i].checked = SummaryCheckButton.checked;
+        Inputs[i].onclick();
+      }
+    }
+  }
+}
+
+function returnObjById( id ) {
+    if (document.getElementById)
+        var returnVar = document.getElementById(id);
+    else if (document.all)
+        var returnVar = document.all[id];
+    else if (document.layers)
+        var returnVar = document.layers[id];
+    return returnVar;
+}
+
+var NumUnchecked = 0;
+
+function ToggleDisplay(CheckButton, ClassName) {
+  if (CheckButton.checked) {
+    SetDisplay(ClassName, "");
+    if (--NumUnchecked == 0) {
+      returnObjById("AllBugsCheck").checked = true;
+    }
+  }
+  else {
+    SetDisplay(ClassName, "none");
+    NumUnchecked++;
+    returnObjById("AllBugsCheck").checked = false;
+  }
+}
+</script>
+<!-- SUMMARYENDHEAD -->
+</head>
+<body>
+<h1>linux - scan-build results</h1>
+
+<table>
+<tr><th>User:</th><td>user@ubuntu-AI</td></tr>
+<tr><th>Working Directory:</th><td>/home/user/men_wanted/agent/linux</td></tr>
+<tr><th>Command Line:</th><td>make LLVM=1 ARCH=x86 -j6 fs/ext4/</td></tr>
+<tr><th>Clang Version:</th><td>clang version 18.1.8
+</td></tr>
+<tr><th>Date:</th><td>Thu Jun 25 18:57:03 2026</td></tr>
+</table>
+<h2>Bug Summary</h2><table>
+<thead><tr><td>Bug Type</td><td>Quantity</td><td class="sorttable_nosort">Display?</td></tr></thead>
+<tr style="font-weight:bold"><td class="SUMM_DESC">All Bugs</td><td class="Q">13</td><td><center><input type="checkbox" id="AllBugsCheck" onClick="CopyCheckedStateToCheckButtons(this);" checked/></center></td></tr>
+<tr><th>Memory Error</th><th colspan=2></th></tr>
+<tr><td class="SUMM_DESC">Context pointer assigned before init completed</td><td class="Q">13</td><td><center><input type="checkbox" onClick="ToggleDisplay(this,'bt_memory_error_context_pointer_assigned_before_init_completed');" checked/></center></td></tr>
+</table>
+<h2>Reports</h2>
+
+<table class="sortable" style="table-layout:automatic">
+<thead><tr>
+  <td>Bug Group</td>
+  <td class="sorttable_sorted">Bug Type<span id="sorttable_sortfwdind">&nbsp;&#x25BE;</span></td>
+  <td>File</td>
+  <td>Function/Method</td>
+  <td class="Q">Line</td>
+  <td class="Q">Path Length</td>
+  <td class="sorttable_nosort"></td>
+  <!-- REPORTBUGCOL -->
+</tr></thead>
+<tbody>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_init_metadata_csum</td><td class="Q">4685</td><td class="Q">10</td><td><a href="report-12abe6.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-12abe6.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_hash_info_init</td><td class="Q">5241</td><td class="Q">30</td><td><a href="report-1ca3d2.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-1ca3d2.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>mballoc.c</td><td class="DESC">ext4_mb_init_backend</td><td class="Q">3590</td><td class="Q">63</td><td><a href="report-267d78.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-267d78.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_block_group_meta_init</td><td class="Q">5290</td><td class="Q">27</td><td><a href="report-3fe5a4.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-3fe5a4.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_block_group_meta_init</td><td class="Q">5302</td><td class="Q">30</td><td><a href="report-4f74af.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-4f74af.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_init_metadata_csum</td><td class="Q">4694</td><td class="Q">11</td><td><a href="report-53e07d.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-53e07d.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>mballoc.c</td><td class="DESC">ext4_mb_init_group</td><td class="Q">1617</td><td class="Q">14</td><td><a href="report-5b644a.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-5b644a.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_group_desc_init</td><td class="Q">4944</td><td class="Q">56</td><td><a href="report-5b8740.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-5b8740.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_inode_info_init</td><td class="Q">4604</td><td class="Q">23</td><td><a href="report-5fba18.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-5fba18.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_load_and_init_journal</td><td class="Q">5031</td><td class="Q">53</td><td><a href="report-89bb0d.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-89bb0d.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_group_desc_init</td><td class="Q">4915</td><td class="Q">52</td><td><a href="report-d255d5.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-d255d5.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_group_desc_init</td><td class="Q">4908</td><td class="Q">41</td><td><a href="report-e2e81b.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-e2e81b.html" -->
+</tr>
+<tr class="bt_memory_error_context_pointer_assigned_before_init_completed"><td class="DESC">Memory Error</td><td class="DESC">Context pointer assigned before init completed</td><td>super.c</td><td class="DESC">ext4_inode_info_init</td><td class="Q">4565</td><td class="Q">14</td><td><a href="report-ff4da5.html#EndPath">View Report</a></td>
+<!-- REPORTBUG id="report-ff4da5.html" -->
+</tr>
+</tbody>
+</table>
+
+</body></html>

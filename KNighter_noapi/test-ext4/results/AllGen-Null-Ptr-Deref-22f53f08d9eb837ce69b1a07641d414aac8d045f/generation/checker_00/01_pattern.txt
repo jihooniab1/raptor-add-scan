@@ -1,0 +1,5 @@
+## Bug Pattern
+
+The bug pattern is setting a context/private pointer (e.g., `test->priv`) to a partially-initialized resource *before* the initialization is complete, combined with a cleanup/exit function that unconditionally dereferences that pointer without checking whether initialization actually succeeded. When an init function fails after assigning the pointer but before finishing setup, the corresponding exit/cleanup routine is still invoked and accesses fields of the partially-initialized (or freed) object, causing a NULL pointer or use-after-free dereference.
+
+Specifically: assigning `test->priv = sb` early in `mbt_kunit_init()` and then failing later, while `mbt_kunit_exit()` blindly uses `test->priv` without a NULL/validity check. The fix requires both (1) assigning the pointer only after init fully succeeds, and (2) guarding the exit path with a NULL check.

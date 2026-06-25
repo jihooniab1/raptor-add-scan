@@ -1,0 +1,76 @@
+<html>
+<head>
+<title>linux - scan-build results</title>
+<link type="text/css" rel="stylesheet" href="scanview.css"/>
+<script src="sorttable.js"></script>
+<script language='javascript' type="text/javascript">
+function SetDisplay(RowClass, DisplayVal)
+{
+  var Rows = document.getElementsByTagName("tr");
+  for ( var i = 0 ; i < Rows.length; ++i ) {
+    if (Rows[i].className == RowClass) {
+      Rows[i].style.display = DisplayVal;
+    }
+  }
+}
+
+function CopyCheckedStateToCheckButtons(SummaryCheckButton) {
+  var Inputs = document.getElementsByTagName("input");
+  for ( var i = 0 ; i < Inputs.length; ++i ) {
+    if (Inputs[i].type == "checkbox") {
+      if(Inputs[i] != SummaryCheckButton) {
+        Inputs[i].checked = SummaryCheckButton.checked;
+        Inputs[i].onclick();
+      }
+    }
+  }
+}
+
+function returnObjById( id ) {
+    if (document.getElementById)
+        var returnVar = document.getElementById(id);
+    else if (document.all)
+        var returnVar = document.all[id];
+    else if (document.layers)
+        var returnVar = document.layers[id];
+    return returnVar;
+}
+
+var NumUnchecked = 0;
+
+function ToggleDisplay(CheckButton, ClassName) {
+  if (CheckButton.checked) {
+    SetDisplay(ClassName, "");
+    if (--NumUnchecked == 0) {
+      returnObjById("AllBugsCheck").checked = true;
+    }
+  }
+  else {
+    SetDisplay(ClassName, "none");
+    NumUnchecked++;
+    returnObjById("AllBugsCheck").checked = false;
+  }
+}
+</script>
+<!-- SUMMARYENDHEAD -->
+</head>
+<body>
+<h1>linux - scan-build results</h1>
+
+<table>
+<tr><th>User:</th><td>user@ubuntu-AI</td></tr>
+<tr><th>Working Directory:</th><td>/home/user/men_wanted/agent/linux</td></tr>
+<tr><th>Command Line:</th><td>make LLVM=1 ARCH=x86 -j6 fs/ext4/mballoc-test.o</td></tr>
+<tr><th>Clang Version:</th><td>clang version 18.1.8
+</td></tr>
+<tr><th>Date:</th><td>Thu Jun 25 18:54:56 2026</td></tr>
+</table>
+<h2>Analyzer Failures</h2>
+<p>The analyzer had problems processing the following files:</p>
+<table>
+<thead><tr><td>Problem</td><td>Source File</td><td>Preprocessed File</td><td>STDERR Output</td></tr></thead>
+<tr><td>Other Error</td><td>mballoc-test.c</td><td><a href="failures/clang_other_error_2xrSeV.i">clang_other_error_2xrSeV.i</a></td><td><a href="failures/clang_other_error_2xrSeV.i.stderr.txt">clang_other_error_2xrSeV.i.stderr.txt</a></td></tr>
+  <!-- REPORTPROBLEM src="mballoc-test.c" file="failures/clang_other_error_2xrSeV.i" clangfile="failures/clang_other_error_2xrSeV.clang.i" stderr="failures/clang_other_error_2xrSeV.i.stderr.txt" info="failures/clang_other_error_2xrSeV.i.info.txt" -->
+</table>
+<p>Please consider submitting preprocessed files as <a href="http://clang-analyzer.llvm.org/filing_bugs.html">bug reports</a>. <!-- REPORTCRASHES --> </p>
+</body></html>
